@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "201901470099",
+    "project_id": "juantap-db-2dbeb",
+    "storage_bucket": "juantap-db-2dbeb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:201901470099:android:47cf76cf64cc175638b866",
+        "android_client_info": {
+          "package_name": "com.example.juantap"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDAsMR9ccK6F2n4Jnx3NSAOph-LENrm6qg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
