@@ -155,7 +155,7 @@ class _LoginPageState extends State<LoginPage> {
                           return 'Email cannot be empty';
                         }
                         if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value.trim())) {
-                          return 'Enter a valid email';
+                          return 'Email does not exist, please try again';
                         }
                         return null;
                       },
@@ -195,6 +195,9 @@ class _LoginPageState extends State<LoginPage> {
                         if (value.trim().length < 6) {
                           return 'Password must be at least 6 characters';
                         }
+                        // if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value.trim())) {
+                        //   return 'Password is incorrect, please try again.';
+                        // }
                         return null;
                       },
                     ),

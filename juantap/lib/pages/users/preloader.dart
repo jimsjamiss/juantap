@@ -54,7 +54,7 @@ class _PreloaderScreenState extends State<PreloaderScreen>
 
               // Static logo
               Image.asset(
-                'assets/images/app-logo.png',
+                'assets/images/app_logo.png',
                 width: 80,
                 height: 80,
               ),

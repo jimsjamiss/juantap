@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 class Registration extends StatefulWidget {
   const Registration({super.key});
@@ -12,12 +13,13 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
-  final _phoneController = TextEditingController(); // Optional
+  final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
+  String _selectedRole = 'user'; // default role
 
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
@@ -65,7 +67,20 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
           password: _passwordController.text,
         );
 
-        await credential.user?.updateDisplayName(_nameController.text.trim());
+        final user = credential.user;
+
+        if (user != null) {
+          await user.updateDisplayName(_nameController.text.trim());
+
+          final dbRef = FirebaseDatabase.instance.ref("users/${user.uid}");
+
+          await dbRef.set({
+            "username": _nameController.text.trim(),
+            "email": _emailController.text.trim(),
+            "phone": _phoneController.text.trim(),
+            "role": _selectedRole, // 👈 Store role in DB
+          });
+        }
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -80,9 +95,7 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
         _passwordController.clear();
         _confirmPasswordController.clear();
 
-        // Optional: Navigate to login or home screen
-        // Navigator.pushReplacement(...);
-
+        Navigator.pop(context); // Go back to login
       } on FirebaseAuthException catch (e) {
         String message = 'Registration failed.';
         if (e.code == 'email-already-in-use') {
@@ -107,7 +120,7 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
       backgroundColor: const Color(0xFF4B8B7A),
       body: Stack(
         children: [
-          // Curved header
+          // Header background
           Positioned(
             top: 0,
             left: 0,
@@ -128,6 +141,7 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
               ),
             ),
           ),
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 60),
             child: SingleChildScrollView(
@@ -140,11 +154,9 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                     child: Column(
                       children: [
                         const SizedBox(height: 100),
-                        const Center(
-                          child: Text(
-                            'Create Account',
-                            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                          ),
+                        const Text(
+                          'Create Account',
+                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 40),
 
@@ -152,9 +164,8 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                           controller: _nameController,
                           hintText: 'Username',
                           validator: (value) =>
-                          value == null || value.isEmpty ? 'Please enter your name' : null,
+                          value == null || value.isEmpty ? 'Enter your name' : null,
                         ),
-
                         _buildTextField(
                           controller: _emailController,
                           hintText: 'Email Address',
@@ -164,7 +175,6 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                             return null;
                           },
                         ),
-
                         _buildTextField(
                           controller: _phoneController,
                           hintText: 'Phone Number',
@@ -175,7 +185,6 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                             return null;
                           },
                         ),
-
                         _buildTextField(
                           controller: _passwordController,
                           hintText: 'Password',
@@ -190,7 +199,6 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                             return null;
                           },
                         ),
-
                         _buildTextField(
                           controller: _confirmPasswordController,
                           hintText: 'Confirm Password',
@@ -206,7 +214,7 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                           },
                         ),
 
-                        const SizedBox(height: 40),
+                        const SizedBox(height: 30),
 
                         SizedBox(
                           width: double.infinity,
@@ -221,14 +229,23 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
                             ),
                             child: const Text(
                               'Sign Up',
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
-                              ),
+                              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 30),
+                        const SizedBox(height: 16),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                          },
+                          child: const Text(
+                            'Back to Login',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),

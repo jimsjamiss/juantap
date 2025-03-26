@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:juantap/pages/users/edit_profile.dart';
 import 'package:juantap/pages/users/home.dart';
 import 'package:juantap/pages/users/login.dart';
 import 'package:juantap/pages/users/signup.dart';
@@ -27,6 +28,7 @@ class JuanTap extends StatelessWidget {
         '/home': (context) => HomePage(),
         '/login': (context) => LoginPage(),
         '/registration': (context) => Registration(),
+        '/edit_profile' : (context) => EditProfilePage(),
       },
     );
   }

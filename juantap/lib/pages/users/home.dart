@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
+
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -7,24 +10,38 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage>
-    with SingleTickerProviderStateMixin {
+class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   late AnimationController _rippleController;
   late Animation<double> _rippleAnimation;
+
+  String _username = '';
+  final _user = FirebaseAuth.instance.currentUser;
 
   @override
   void initState() {
     super.initState();
-
-    // Ripple Animation for SOS button
     _rippleController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: false);
+      duration: const Duration(seconds: 3),
+    )..repeat();
 
-    _rippleAnimation = Tween<double>(begin: 0.8, end: 1.4).animate(
+    _rippleAnimation = Tween<double>(begin: 1.0, end: 2.2).animate(
       CurvedAnimation(parent: _rippleController, curve: Curves.easeOut),
     );
+
+    _fetchUsername();
+  }
+
+  Future<void> _fetchUsername() async {
+    if (_user != null) {
+      final dbRef = FirebaseDatabase.instance.ref("users/${_user!.uid}");
+      final snapshot = await dbRef.get();
+      if (snapshot.exists) {
+        setState(() {
+          _username = snapshot.child("username").value.toString();
+        });
+      }
+    }
   }
 
   @override
@@ -69,18 +86,49 @@ class _HomePageState extends State<HomePage>
                         ),
                       ),
                       const SizedBox(height: 12),
-                      const CircleAvatar(
-                        radius: 25,
-                        backgroundImage: AssetImage(
-                          'assets/images/user_profile.png',
-                        ), // Replace with your image
+                      Stack(
+                        children: [
+                          const CircleAvatar(
+                            radius: 30,
+                            backgroundImage: AssetImage('assets/images/user_profile.png'),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: GestureDetector(
+                              onTap: () {
+                                // TODO: Implement profile editing navigation
+                                Navigator.pushNamed(context, '/edit_profile');
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black26,
+                                      blurRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.edit,
+                                  size: 16,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Kentoyin',
-                        style: TextStyle(
+                      Text(
+                        _username.isNotEmpty ? _username : 'Loading...',
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
+                          color: Colors.black,
                         ),
                       ),
                       const Text('(User)', style: TextStyle(fontSize: 12)),
@@ -91,72 +139,71 @@ class _HomePageState extends State<HomePage>
             ),
           ),
 
-          // SOS Button with Ripple Animation
+          // Ripple + SOS
           Align(
             alignment: Alignment.center,
-            child: AnimatedBuilder(
-              animation: _rippleController,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _rippleAnimation.value,
-                  child: Container(
-                    width: 220,
-                    height: 220,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white60, width: 1),
-                    ),
-                    child: Center(
-                      child: GestureDetector(
-                        onTap: () {
-                          // SOS action
-                        },
-                        child: Container(
-                          width: 100,
-                          height: 100,
-                          decoration: const BoxDecoration(
-                            color: Colors.redAccent,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black26,
-                                blurRadius: 8,
-                                offset: Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: const Center(
-                            child: Text(
-                              'SOS',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                AnimatedBuilder(
+                  animation: _rippleController,
+                  builder: (context, child) {
+                    return Stack(
+                      children: List.generate(3, (index) {
+                        final delay = index * 0.3;
+                        final animationValue = (_rippleController.value - delay).clamp(0.0, 1.0);
+                        final scale = 1.0 + animationValue * 2;
+                        final opacity = (1 - animationValue).clamp(0.0, 1.0);
+
+                        return Opacity(
+                          opacity: opacity,
+                          child: Transform.scale(
+                            scale: scale,
+                            child: Container(
+                              width: 120,
+                              height: 120,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.redAccent.withOpacity(0.4),
                               ),
                             ),
                           ),
+                        );
+                      }),
+                    );
+                  },
+                ),
+                GestureDetector(
+                  onTap: () {
+                    // SOS logic
+                  },
+                  child: Container(
+                    width: 100,
+                    height: 100,
+                    decoration: const BoxDecoration(
+                      color: Colors.redAccent,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 8,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'SOS',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ),
-                );
-              },
-            ),
-          ),
-
-          // Emergency Tap text
-          Positioned(
-            bottom: MediaQuery.of(context).size.height * 0.38,
-            left: 0,
-            right: 0,
-            child: const Center(
-              child: Text(
-                'Emergency Tap',
-                style: TextStyle(
-                  color: Colors.black,
-                  fontWeight: FontWeight.bold,
                 ),
-              ),
+              ],
             ),
           ),
 
@@ -165,7 +212,7 @@ class _HomePageState extends State<HomePage>
             top: MediaQuery.of(context).size.height * 0.52,
             right: 20,
             child: Image.asset(
-              'assets/images/checkin.png',
+              'assets/images/checkIn_button.png',
               width: 50,
               height: 50,
             ),
@@ -182,23 +229,22 @@ class _HomePageState extends State<HomePage>
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   BottomMenuButton(
-                    imagePath:
-                    'assets/images/911button.png', // Replace with actual paths
+                    imagePath: 'assets/images/hotline_button.png',
                     label: 'Call 911',
                     onTap: () {},
                   ),
                   BottomMenuButton(
-                    imagePath: 'assets/images/map-button.png',
+                    imagePath: 'assets/images/map_button.png',
                     label: 'Map',
                     onTap: () {},
                   ),
                   BottomMenuButton(
-                    imagePath: 'assets/images/companion-button.png',
+                    imagePath: 'assets/images/companion_button.png',
                     label: 'Companion',
                     onTap: () {},
                   ),
                   BottomMenuButton(
-                    imagePath: 'assets/images/contact-button.png',
+                    imagePath: 'assets/images/contact_button.png',
                     label: 'Contacts',
                     onTap: () {},
                   ),
@@ -212,7 +258,6 @@ class _HomePageState extends State<HomePage>
   }
 }
 
-// Curved Header Clipper
 class TopCurveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
@@ -233,7 +278,6 @@ class TopCurveClipper extends CustomClipper<Path> {
   bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }
 
-// Bottom Menu Button Widget
 class BottomMenuButton extends StatelessWidget {
   final String imagePath;
   final String label;
@@ -259,6 +303,13 @@ class BottomMenuButton extends StatelessWidget {
               color: Color(0xFFF7F6D9),
               shape: BoxShape.circle,
               boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Image.asset(
+                imagePath,
+                fit: BoxFit.contain,
+              ),
             ),
           ),
         ),
