@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'dart:math';
+import 'email_service.dart';
 
 class Registration extends StatefulWidget {
   const Registration({super.key});
@@ -9,7 +11,7 @@ class Registration extends StatefulWidget {
   State<Registration> createState() => _RegistrationState();
 }
 
-class _RegistrationState extends State<Registration> with SingleTickerProviderStateMixin {
+class _RegistrationState extends State<Registration> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -19,43 +21,11 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
 
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
-  String _selectedRole = 'user'; // default role
+  String _selectedRole = 'user';
 
-  late AnimationController _animationController;
-  late Animation<Offset> _slideAnimation;
-  late Animation<double> _fadeAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
-
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animationController, curve: Curves.easeOut));
-
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _animationController, curve: Curves.easeIn));
-
-    _animationController.forward();
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    _nameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
-    super.dispose();
+  String _generateOtp() {
+    final random = Random();
+    return (random.nextInt(900000) + 100000).toString(); // 6-digit OTP
   }
 
   Future<void> _submitForm() async {
@@ -68,34 +38,31 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
         );
 
         final user = credential.user;
-
         if (user != null) {
           await user.updateDisplayName(_nameController.text.trim());
 
           final dbRef = FirebaseDatabase.instance.ref("users/${user.uid}");
-
           await dbRef.set({
             "username": _nameController.text.trim(),
             "email": _emailController.text.trim(),
             "phone": _phoneController.text.trim(),
-            "role": _selectedRole, // 👈 Store role in DB
+            "role": _selectedRole,
           });
+
+          final otpCode = _generateOtp();
+          final success = await EmailService.sendOtpEmail(
+            userEmail: _emailController.text.trim(),
+            otpCode: otpCode,
+          );
+
+          if (success) {
+            _showOtpModal(otpCode);
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Failed to send OTP email."), backgroundColor: Colors.red),
+            );
+          }
         }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Registration Successful!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        _nameController.clear();
-        _emailController.clear();
-        _phoneController.clear();
-        _passwordController.clear();
-        _confirmPasswordController.clear();
-
-        Navigator.pop(context); // Go back to login
       } on FirebaseAuthException catch (e) {
         String message = 'Registration failed.';
         if (e.code == 'email-already-in-use') {
@@ -114,140 +81,133 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
     }
   }
 
+  void _showOtpModal(String otpCode) {
+    final TextEditingController _otpController = TextEditingController();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text("Verify Email"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("Enter the 6-digit code sent to your email."),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _otpController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(hintText: "Enter OTP"),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (_otpController.text.trim() == otpCode) {
+                  Navigator.of(context).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Email verified!"), backgroundColor: Colors.green),
+                  );
+                  _clearFormAndGoBack();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Invalid OTP."), backgroundColor: Colors.red),
+                  );
+                }
+              },
+              child: const Text("Verify"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _clearFormAndGoBack() {
+    _nameController.clear();
+    _emailController.clear();
+    _phoneController.clear();
+    _passwordController.clear();
+    _confirmPasswordController.clear();
+    Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF4B8B7A),
+      backgroundColor: const Color(0xFF417B63),
       body: Stack(
         children: [
-          // Header background
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: Container(
-              height: 200,
+              height: 180,
               decoration: const BoxDecoration(
                 color: Color(0xFFF7F6D9),
-                borderRadius: BorderRadius.only(bottomLeft: Radius.circular(160)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black54,
-                    offset: Offset(0, 4),
-                    blurRadius: 10,
-                    spreadRadius: 2,
-                  ),
-                ],
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(140),
+                ),
+              ),
+              alignment: Alignment.bottomCenter,
+              padding: const EdgeInsets.only(bottom: 24),
+              child: const Text(
+                "Create Account",
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
               ),
             ),
           ),
-
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 60),
-            child: SingleChildScrollView(
-              child: SlideTransition(
-                position: _slideAnimation,
-                child: FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 100),
-                        const Text(
-                          'Create Account',
-                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 40),
-
-                        _buildTextField(
-                          controller: _nameController,
-                          hintText: 'Username',
-                          validator: (value) =>
-                          value == null || value.isEmpty ? 'Enter your name' : null,
-                        ),
-                        _buildTextField(
-                          controller: _emailController,
-                          hintText: 'Email Address',
-                          validator: (value) {
-                            if (value == null || value.isEmpty) return 'Enter email';
-                            if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value)) return 'Invalid email';
-                            return null;
-                          },
-                        ),
-                        _buildTextField(
-                          controller: _phoneController,
-                          hintText: 'Phone Number',
-                          keyboardType: TextInputType.phone,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) return 'Enter phone number';
-                            if (!RegExp(r'^\d+$').hasMatch(value)) return 'Invalid phone number';
-                            return null;
-                          },
-                        ),
-                        _buildTextField(
-                          controller: _passwordController,
-                          hintText: 'Password',
-                          obscureText: !_isPasswordVisible,
-                          toggleVisibility: () {
-                            setState(() => _isPasswordVisible = !_isPasswordVisible);
-                          },
-                          isPassword: true,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) return 'Enter password';
-                            if (value.length < 6) return 'Minimum 6 characters';
-                            return null;
-                          },
-                        ),
-                        _buildTextField(
-                          controller: _confirmPasswordController,
-                          hintText: 'Confirm Password',
-                          obscureText: !_isConfirmPasswordVisible,
-                          toggleVisibility: () {
-                            setState(() => _isConfirmPasswordVisible = !_isConfirmPasswordVisible);
-                          },
-                          isPassword: true,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) return 'Confirm your password';
-                            if (value != _passwordController.text) return 'Passwords do not match';
-                            return null;
-                          },
-                        ),
-
-                        const SizedBox(height: 30),
-
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: _submitForm,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFF7F6D9),
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                            ),
-                            child: const Text(
-                              'Sign Up',
-                              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+            padding: const EdgeInsets.fromLTRB(32, 220, 32, 16),
+            child: Center(
+              child: SingleChildScrollView(
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildField(_nameController, "Full Name", validator: (v) => v!.isEmpty ? "Required" : null),
+                      _buildField(_emailController, "Email Address", validator: (v) {
+                        if (v!.isEmpty) return "Required";
+                        if (!RegExp(r'\S+@\S+\.\S+').hasMatch(v)) return "Invalid email";
+                        return null;
+                      }),
+                      _buildField(_phoneController, "Phone Number", validator: (v) => v!.isEmpty ? "Required" : null),
+                      _buildField(_passwordController, "Password", obscureText: !_isPasswordVisible, toggle: () {
+                        setState(() => _isPasswordVisible = !_isPasswordVisible);
+                      }, validator: (v) => v!.length < 6 ? "Min 6 chars" : null),
+                      _buildField(_confirmPasswordController, "Confirm Password", obscureText: !_isConfirmPasswordVisible, toggle: () {
+                        setState(() => _isConfirmPasswordVisible = !_isConfirmPasswordVisible);
+                      }, validator: (v) => v != _passwordController.text ? "Passwords don't match" : null),
+                      const SizedBox(height: 32),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _submitForm,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF7F6D9),
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(40),
                             ),
                           ),
+                          child: const Text("Sign Up"),
                         ),
-                        const SizedBox(height: 16),
-                        TextButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                          },
-                          child: const Text(
-                            'Back to Login',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
                   ),
                 ),
               ),
@@ -258,36 +218,31 @@ class _RegistrationState extends State<Registration> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String hintText,
-    bool obscureText = false,
-    bool isPassword = false,
-    TextInputType keyboardType = TextInputType.text,
-    required String? Function(String?) validator,
-    VoidCallback? toggleVisibility,
-  }) {
+  Widget _buildField(TextEditingController controller, String hint,
+      {bool obscureText = false, VoidCallback? toggle, String? Function(String?)? validator}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: TextFormField(
         controller: controller,
         obscureText: obscureText,
-        keyboardType: keyboardType,
         validator: validator,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
-          hintText: hintText,
+          hintText: hint,
           hintStyle: const TextStyle(color: Colors.white70),
           enabledBorder: const UnderlineInputBorder(
+            borderSide: BorderSide(color: Colors.white70),
+          ),
+          focusedBorder: const UnderlineInputBorder(
             borderSide: BorderSide(color: Colors.white),
           ),
-          suffixIcon: isPassword
+          suffixIcon: toggle != null
               ? IconButton(
             icon: Icon(
               obscureText ? Icons.visibility_off : Icons.visibility,
               color: Colors.white70,
             ),
-            onPressed: toggleVisibility,
+            onPressed: toggle,
           )
               : null,
         ),

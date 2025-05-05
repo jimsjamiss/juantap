@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -15,6 +14,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   late Animation<double> _rippleAnimation;
 
   String _username = '';
+  String? profileImageUrl;
+
   final _user = FirebaseAuth.instance.currentUser;
 
   @override
@@ -29,16 +30,19 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       CurvedAnimation(parent: _rippleController, curve: Curves.easeOut),
     );
 
-    _fetchUsername();
+    _loadUserData();
   }
 
-  Future<void> _fetchUsername() async {
-    if (_user != null) {
-      final dbRef = FirebaseDatabase.instance.ref("users/${_user!.uid}");
-      final snapshot = await dbRef.get();
+  Future<void> _loadUserData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final ref = FirebaseDatabase.instance.ref('users/${user.uid}');
+      final snapshot = await ref.get();
       if (snapshot.exists) {
+        final data = Map<String, dynamic>.from(snapshot.value as Map);
         setState(() {
-          _username = snapshot.child("username").value.toString();
+          profileImageUrl = data['profileImage'];
+          _username = data['username'] ?? '';
         });
       }
     }
@@ -64,7 +68,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
             child: ClipPath(
               clipper: TopCurveClipper(),
               child: Container(
-                height: 180,
+                height: 220,
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     colors: [Color(0xFF95B6A1), Color(0xFF4B8B7A)],
@@ -75,6 +79,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 child: Padding(
                   padding: const EdgeInsets.only(top: 40, left: 16, right: 16),
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
                         'JUANTAP',
@@ -85,19 +90,20 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                           color: Colors.black,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       Stack(
                         children: [
-                          const CircleAvatar(
-                            radius: 30,
-                            backgroundImage: AssetImage('assets/images/user_profile.png'),
+                          CircleAvatar(
+                            radius: 35,
+                            backgroundImage: profileImageUrl != null
+                                ? NetworkImage(profileImageUrl!)
+                                : const AssetImage('assets/images/user_profile.png') as ImageProvider,
                           ),
                           Positioned(
                             bottom: 0,
                             right: 0,
                             child: GestureDetector(
                               onTap: () {
-                                // TODO: Implement profile editing navigation
                                 Navigator.pushNamed(context, '/edit_profile');
                               },
                               child: Container(
@@ -126,12 +132,11 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                       Text(
                         _username.isNotEmpty ? _username : 'Loading...',
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: Colors.black,
                         ),
                       ),
-                      const Text('(User)', style: TextStyle(fontSize: 12)),
                     ],
                   ),
                 ),
@@ -175,7 +180,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 ),
                 GestureDetector(
                   onTap: () {
-                    // SOS logic
+                    // TODO: SOS logic
                   },
                   child: Container(
                     width: 100,
@@ -224,7 +229,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
             left: 0,
             right: 0,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.fromLTRB(16, 60, 16, 0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
