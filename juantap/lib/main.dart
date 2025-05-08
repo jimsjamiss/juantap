@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:juantap/pages/users/edit_profile.dart';
 import 'package:juantap/pages/users/home.dart';
 import 'package:juantap/pages/users/login.dart';
+import 'package:juantap/pages/users/maps_location.dart';
 import 'package:juantap/pages/users/signup.dart';
 import 'package:juantap/pages/users/splash_screen.dart';
 
@@ -29,6 +30,7 @@ class JuanTap extends StatelessWidget {
         '/login': (context) => LoginPage(),
         '/registration': (context) => Registration(),
         '/edit_profile' : (context) => EditProfilePage(),
+        '/maps_location' : (context) => MapsLocation(),
       },
     );
   }

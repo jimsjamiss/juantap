@@ -102,6 +102,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
         String? imageUrl = _profileImageUrl;
         if (_selectedImage != null) {
           imageUrl = await _uploadImageToCloudinary(_selectedImage!);
+          setState(() {
+            _profileImageUrl = imageUrl;
+          });
         }
 
         final ref = FirebaseDatabase.instance.ref('users/${_user!.uid}');
@@ -125,6 +128,32 @@ class _EditProfilePageState extends State<EditProfilePage> {
       } finally {
         setState(() => _isSaving = false);
       }
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await FirebaseAuth.instance.signOut();
+      if (!context.mounted) return;
+      Navigator.pushReplacementNamed(context, '/login');
     }
   }
 
@@ -199,10 +228,38 @@ class _EditProfilePageState extends State<EditProfilePage> {
                 _buildInputField(_emailController, 'E-mail', readOnly: true),
                 _buildInputField(_addressController, 'Current Address'),
                 const SizedBox(height: 20),
+
+                // Save Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _isSaving ? null : _saveChanges,
+                    onPressed: _isSaving ? null : () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Confirm Changes'),
+                          content: const Text('Are you sure you want to save your profile changes?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('Cancel'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF417B63),
+                              ),
+                              child: const Text('Yes', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                        ),
+                      );
+
+                      if (confirmed == true) {
+                        _saveChanges();
+                      }
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFF7F6D9),
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -214,7 +271,27 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         ? const CircularProgressIndicator(color: Colors.black)
                         : const Text('Save', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                   ),
-                )
+                ),
+
+                const SizedBox(height: 20),
+
+                // Logout Button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.logout, color: Colors.white),
+                    label: const Text(
+                      'Logout',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade300, // 🎨 soft red background
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    onPressed: _logout,
+                  ),
+                ),
               ],
             ),
           ),

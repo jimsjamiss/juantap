@@ -103,8 +103,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                             bottom: 0,
                             right: 0,
                             child: GestureDetector(
-                              onTap: () {
-                                Navigator.pushNamed(context, '/edit_profile');
+                              onTap: () async {
+                                await Navigator.pushNamed(context, '/edit_profile');
+                                _loadUserData(); // 🔁 reload user data after returning
                               },
                               child: Container(
                                 padding: const EdgeInsets.all(3),
@@ -211,18 +212,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               ],
             ),
           ),
-
-          // Check-In Icon
-          Positioned(
-            top: MediaQuery.of(context).size.height * 0.52,
-            right: 20,
-            child: Image.asset(
-              'assets/images/checkIn_button.png',
-              width: 50,
-              height: 50,
-            ),
-          ),
-
           // Bottom Menu Buttons
           Positioned(
             bottom: 30,
@@ -234,18 +223,15 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   BottomMenuButton(
-                    imagePath: 'assets/images/hotline_button.png',
-                    label: 'Call 911',
-                    onTap: () {},
-                  ),
-                  BottomMenuButton(
                     imagePath: 'assets/images/map_button.png',
                     label: 'Map',
-                    onTap: () {},
+                    onTap: () {
+                      Navigator.pushNamed(context, '/maps_location');
+                    },
                   ),
                   BottomMenuButton(
-                    imagePath: 'assets/images/companion_button.png',
-                    label: 'Companion',
+                    imagePath: 'assets/images/checkIn_button.png',
+                    label: 'Check-In',
                     onTap: () {},
                   ),
                   BottomMenuButton(

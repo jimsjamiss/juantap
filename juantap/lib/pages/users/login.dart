@@ -57,12 +57,36 @@ class _LoginPageState extends State<LoginPage> {
           password: _passwordController.text,
         );
 
-        _showSnackbar('Login Successful!', Colors.green);
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomePage()),
+        // Show animated success dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AlertDialog(
+            backgroundColor: const Color(0xFFF7F6D9),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                AnimatedCheckmark(),
+                SizedBox(height: 12),
+                Text(
+                  'Login Successful!',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: 6),
+              ],
+            ),
+          ),
         );
+
+        // Delay then redirect
+        Future.delayed(const Duration(seconds: 2), () {
+          Navigator.of(context).pop(); // close dialog
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const HomePage()),
+          );
+        });
       } on FirebaseAuthException catch (e) {
         String errorMsg = 'Login failed';
         if (e.code == 'user-not-found') {
@@ -137,7 +161,6 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 50),
-
                     TextFormField(
                       controller: _emailController,
                       decoration: InputDecoration(
@@ -155,13 +178,12 @@ class _LoginPageState extends State<LoginPage> {
                           return 'Email cannot be empty';
                         }
                         if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value.trim())) {
-                          return 'Email does not exist, please try again';
+                          return 'Invalid email format';
                         }
                         return null;
                       },
                     ),
                     const SizedBox(height: 20),
-
                     TextFormField(
                       controller: _passwordController,
                       obscureText: !_isPasswordVisible,
@@ -195,14 +217,10 @@ class _LoginPageState extends State<LoginPage> {
                         if (value.trim().length < 6) {
                           return 'Password must be at least 6 characters';
                         }
-                        // if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value.trim())) {
-                        //   return 'Password is incorrect, please try again.';
-                        // }
                         return null;
                       },
                     ),
                     const SizedBox(height: 30),
-
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -231,7 +249,6 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -262,6 +279,51 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class AnimatedCheckmark extends StatefulWidget {
+  const AnimatedCheckmark({super.key});
+
+  @override
+  State<AnimatedCheckmark> createState() => _AnimatedCheckmarkState();
+}
+
+class _AnimatedCheckmarkState extends State<AnimatedCheckmark>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..forward();
+
+    _scaleAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.elasticOut,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scaleAnimation,
+      child: const Icon(
+        Icons.check_circle,
+        color: Colors.green,
+        size: 64,
       ),
     );
   }
