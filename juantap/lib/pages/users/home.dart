@@ -237,7 +237,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   BottomMenuButton(
                     imagePath: 'assets/images/contact_button.png',
                     label: 'Contacts',
-                    onTap: () {},
+                    onTap: () {
+                      Navigator.pushNamed(context, '/contact_lists');
+                    },
                   ),
                 ],
               ),

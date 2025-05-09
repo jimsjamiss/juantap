@@ -1,12 +1,13 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:juantap/pages/users/contact_lists.dart';
 import 'package:juantap/pages/users/edit_profile.dart';
 import 'package:juantap/pages/users/home.dart';
 import 'package:juantap/pages/users/login.dart';
 import 'package:juantap/pages/users/maps_location.dart';
 import 'package:juantap/pages/users/signup.dart';
 import 'package:juantap/pages/users/splash_screen.dart';
-
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,14 +24,35 @@ class JuanTap extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'JuanTap',
       theme: ThemeData(primarySwatch: Colors.blue),
-      initialRoute: '/',
+      home: const AuthGate(), // NEW: Auth checker
       routes: {
-        '/': (context) => SplashScreen(),
         '/home': (context) => HomePage(),
         '/login': (context) => LoginPage(),
         '/registration': (context) => Registration(),
-        '/edit_profile' : (context) => EditProfilePage(),
-        '/maps_location' : (context) => MapsLocation(),
+        '/edit_profile': (context) => EditProfilePage(),
+        '/maps_location': (context) => MapsLocation(),
+        '/contact_lists': (context) => ContactListPage(),
+      },
+    );
+  }
+}
+
+// NEW: Auth Gate to handle login state
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SplashScreen(); // while loading
+        } else if (snapshot.hasData) {
+          return HomePage(); // user is logged in
+        } else {
+          return LoginPage(); // not logged in
+        }
       },
     );
   }
