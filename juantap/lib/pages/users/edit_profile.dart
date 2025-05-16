@@ -172,7 +172,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
                     ),
                     const Expanded(
                       child: Center(
@@ -182,7 +182,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         ),
                       ),
                     ),
-                    const Icon(Icons.check, color: Colors.white)
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -196,7 +195,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                           ? FileImage(_selectedImage!)
                           : (_profileImageUrl != null
                           ? NetworkImage(_profileImageUrl!)
-                          : const AssetImage('assets/default_avatar.png')) as ImageProvider,
+                          : const AssetImage('assets/user_profile.png')) as ImageProvider,
                     ),
                     Positioned(
                       bottom: 0,
@@ -208,7 +207,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                             shape: BoxShape.circle,
                             color: Colors.white,
                           ),
-                          padding: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.all(2),
                           child: const Icon(Icons.add, color: Color(0xFF417B63)),
                         ),
                       ),
@@ -274,24 +273,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
                 ),
 
                 const SizedBox(height: 20),
-
-                // Logout Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.logout, color: Colors.white),
-                    label: const Text(
-                      'Logout',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade300, // 🎨 soft red background
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    ),
-                    onPressed: _logout,
-                  ),
-                ),
               ],
             ),
           ),
