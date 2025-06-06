@@ -443,6 +443,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     int secondsLeft = 5;
     late StateSetter updateState;
     Timer? countdownTimer;
+    bool isCancelled = false; // <-- flag to prevent SOS if cancelled
 
     showDialog(
       context: context,
@@ -451,14 +452,31 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         return StatefulBuilder(
           builder: (context, setState) {
             updateState = setState;
+
+            countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (timer) {
+              if (secondsLeft == 1) {
+                timer.cancel();
+                Navigator.pop(context);
+
+                if (!isCancelled) {
+                  sendSosAlert(); // <-- Only send if not cancelled
+                }
+              } else {
+                setState(() {
+                  secondsLeft--;
+                });
+              }
+            });
+
             return AlertDialog(
               title: const Text('️Do you want to Send SOS?️'),
               content: Text('Sending SOS in $secondsLeft seconds...'),
               actions: [
                 TextButton(
                   onPressed: () {
+                    isCancelled = true; // <-- mark as cancelled
                     countdownTimer?.cancel();
-                    Navigator.pop(context); // Cancel SOS
+                    Navigator.pop(context); // Close dialog
                   },
                   child: const Text('Cancel'),
                 ),
@@ -468,18 +486,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         );
       },
     );
-
-    countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (secondsLeft <= 1) {
-        timer.cancel();
-        Navigator.pop(context); // close dialog
-        sendSosAlert(); // send the actual SOS
-      } else {
-        secondsLeft--;
-        updateState(() {}); // update dialog content
-      }
-    });
   }
+
 
   @override
   void dispose() {

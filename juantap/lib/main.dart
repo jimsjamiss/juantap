@@ -1,6 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:juantap/pages/admin/admin.dart';
+import 'package:juantap/pages/responders/responder.dart';
 import 'package:juantap/pages/users/call_page.dart';
 import 'package:juantap/pages/users/check_in.dart';
 import 'package:juantap/pages/users/contact_lists.dart';
@@ -37,6 +39,8 @@ class JuanTap extends StatelessWidget {
         '/check_in': (context) => CheckInPage(),
         '/contact_lists': (context) => ContactListPage(),
         '/contact_lists_requests': (context) => ContactListsRequestsPage(),
+        '/adminDashboard': (context) => const admin(),
+        '/responderDashboard': (context) => const ResponderDashboard(),
         // '/call_page': (context) => CallPage
         //   (
         //     userID: FirebaseAuth.instance.currentUser!.uid,

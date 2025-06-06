@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:juantap/pages/users/home.dart';
+import 'package:firebase_database/firebase_database.dart';
+import '../responders/responder.dart';
+import '../admin/admin.dart';
 
 class Login extends StatelessWidget {
   const Login({super.key});
@@ -52,12 +55,23 @@ class _LoginPageState extends State<LoginPage> {
       setState(() => _isLoading = true);
 
       try {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+        final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
 
-        // Show animated success dialog
+        final uid = credential.user!.uid;
+        final userRef = FirebaseDatabase.instance.ref('users/$uid');
+        final snapshot = await userRef.get();
+
+        if (!snapshot.exists) {
+          _showSnackbar('User data not found.', Colors.red);
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        final role = snapshot.child('role').value.toString();
+
         showDialog(
           context: context,
           barrierDismissible: false,
@@ -69,24 +83,25 @@ class _LoginPageState extends State<LoginPage> {
               children: const [
                 AnimatedCheckmark(),
                 SizedBox(height: 12),
-                Text(
-                  'Login Successful!',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+                Text('Login Successful!', style: TextStyle(fontWeight: FontWeight.bold)),
                 SizedBox(height: 6),
               ],
             ),
           ),
         );
 
-        // Delay then redirect
         Future.delayed(const Duration(seconds: 2), () {
           Navigator.of(context).pop(); // close dialog
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const HomePage()),
-          );
+
+          if (role == 'admin') {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const admin()));
+          } else if (role == 'responder') {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ResponderDashboard()));
+          } else {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
+          }
         });
+
       } on FirebaseAuthException catch (e) {
         String errorMsg = 'Login failed';
         if (e.code == 'user-not-found') {
@@ -102,6 +117,7 @@ class _LoginPageState extends State<LoginPage> {
       }
     }
   }
+
 
   @override
   void dispose() {
