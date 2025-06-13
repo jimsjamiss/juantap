@@ -1,18 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'send_alert_response.dart';
 import 'incident_reports.dart';
+import 'package:juantap/pages/users/login.dart';
 
-class ResponderDashboard extends StatefulWidget {
+
+class ResponderDashboard extends StatelessWidget {
   const ResponderDashboard({super.key});
 
   @override
-  State<ResponderDashboard> createState() => _ResponderDashboardState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Emergency Notifications',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+        useMaterial3: true,
+      ),
+      home: const MyHomePage(title: 'Responder'),
+    );
+  }
 }
 
-class _ResponderDashboardState extends State<ResponderDashboard> {
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key, required this.title});
+  final String title;
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
   File? _profileImage;
+  final _nameController = TextEditingController();
+  final user = FirebaseAuth.instance.currentUser;
+  String _username = '';
 
   Future<void> _pickImage() async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
@@ -21,6 +45,83 @@ class _ResponderDashboardState extends State<ResponderDashboard> {
         _profileImage = File(picked.path);
       });
     }
+  }
+
+  Future<void> _updateName() async {
+    if (user != null) {
+      final newName = _nameController.text.trim();
+      if (newName.isNotEmpty) {
+        await FirebaseDatabase.instance.ref("users/${user!.uid}/username").set(newName);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name updated successfully')));
+        setState(() {
+          _username = newName;
+        });
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  void _logout() async {
+    final shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Logout'),
+        content: const Text('Are you sure you want to log out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLogout == true) {
+      await FirebaseAuth.instance.signOut();
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+      );
+    }
+  }
+
+
+  void _showEditNameDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Name'),
+        content: TextField(
+          controller: _nameController,
+          decoration: const InputDecoration(hintText: 'Enter new name'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(onPressed: _updateName, child: const Text('Save')),
+        ],
+      ),
+    );
+  }
+
+  void _fetchUsername() async {
+    if (user != null) {
+      final snapshot = await FirebaseDatabase.instance.ref("users/${user!.uid}/username").get();
+      if (snapshot.exists) {
+        setState(() {
+          _username = snapshot.value.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUsername();
   }
 
   void _showNotificationDialog(BuildContext context, Map<String, String> item) {
@@ -137,28 +238,12 @@ class _ResponderDashboardState extends State<ResponderDashboard> {
         'date': '02/13/2025',
         'image': 'https://i.imgur.com/QCNbOAo.png'
       },
-      {
-        'name': 'Tralalio Tropa Lang',
-        'location': 'Brgy. Opao, Umapad',
-        'time': '7:04 am',
-        'reason': 'SOS Alert',
-        'date': '02/12/2025',
-        'image': 'https://i.imgur.com/BoN9kdC.png'
-      },
-      {
-        'name': 'Biningit',
-        'location': 'Brgy. Opao, Umapad',
-        'time': '12:04 am',
-        'reason': 'no response',
-        'date': '02/11/2025',
-        'image': 'https://i.imgur.com/uQw7pDa.jpg'
-      },
     ];
 
     return Scaffold(
       backgroundColor: const Color(0xFF2A9D8F),
       appBar: AppBar(
-        title: const Text('Responder', style: TextStyle(color: Colors.white)),
+        title: Text(widget.title, style: const TextStyle(color: Colors.white)),
         backgroundColor: const Color(0xFF2A9D8F),
         elevation: 0,
       ),
@@ -176,9 +261,10 @@ class _ResponderDashboardState extends State<ResponderDashboard> {
               ),
             ),
             const SizedBox(height: 10),
-            const Text('Responder Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            const SizedBox(height: 5),
-            const Text('responder@email.com', style: TextStyle(color: Colors.grey)),
+            Text(_username, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ElevatedButton(onPressed: _showEditNameDialog, child: const Text("Edit Name")),
+            const SizedBox(height: 10),
+            ElevatedButton(onPressed: _logout, child: const Text("Logout")),
           ],
         ),
       ),
@@ -216,57 +302,51 @@ class _ResponderDashboardState extends State<ResponderDashboard> {
                             ),
                             borderRadius: BorderRadius.circular(20),
                           ),
-                          child: Stack(
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Row(
-                                  children: [
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Image.network(
-                                        item['image']!,
-                                        width: 60,
-                                        height: 60,
-                                        fit: BoxFit.cover,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    item['image']!,
+                                    width: 60,
+                                    height: 60,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item['name']!,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                      const SizedBox(height: 2),
+                                      Text(item['location']!, style: const TextStyle(color: Colors.white)),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
-                                          Text(
-                                            item['name']!,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(item['location']!, style: const TextStyle(color: Colors.white)),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Text("Time in location\n${item['time']}", style: const TextStyle(color: Colors.white, fontSize: 12)),
-                                              Text("Reason\n${item['reason']}", style: const TextStyle(color: Colors.white, fontSize: 12)),
-                                              Text("Date\n${item['date']}", style: const TextStyle(color: Colors.white, fontSize: 12)),
-                                            ],
-                                          ),
+                                          Text("Time\n${item['time']}",
+                                              style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                          Text("Reason\n${item['reason']}",
+                                              style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                          Text("Date\n${item['date']}",
+                                              style: const TextStyle(color: Colors.white, fontSize: 12)),
                                         ],
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              const Positioned(
-                                top: 8,
-                                right: 8,
-                                child: Icon(Icons.arrow_circle_right, size: 32, color: Colors.white),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'location_of_the_user.dart'; // ✅ Import the map page
+import 'location_of_the_user.dart';
+import 'responder.dart'; // ✅ Import the ResponderDashboard
 
 class SendAlertResponsePage extends StatelessWidget {
   final Map<String, String> data;
@@ -13,7 +14,16 @@ class SendAlertResponsePage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: const Color(0xFF2A9D8F),
         elevation: 0,
-        leading: const BackButton(color: Colors.white),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const ResponderDashboard()),
+                  (route) => false,
+            );
+          },
+        ),
         title: const Text('Responder', style: TextStyle(color: Colors.white)),
         actions: [
           IconButton(
@@ -94,14 +104,12 @@ class SendAlertResponsePage extends StatelessWidget {
               ),
               const SizedBox(height: 16),
 
-              // ✅ Button to go to location page
+              // ✅ Button navigates to LocationOfUserPage
               GestureDetector(
                 onTap: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(
-                      builder: (context) => const LocationOfUserPage(),
-                    ),
+                    MaterialPageRoute(builder: (_) => const LocationOfUserPage()),
                   );
                 },
                 child: Container(
@@ -126,7 +134,9 @@ class SendAlertResponsePage extends StatelessWidget {
                   child: const Text(
                     'Send Alert Response',
                     style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold),
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),

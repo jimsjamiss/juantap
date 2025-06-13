@@ -268,15 +268,15 @@ class _LoginPageState extends State<LoginPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        TextButton(
-                          onPressed: () {
-                            // TODO: Add forgot password screen
-                          },
-                          child: const Text(
-                            'Forgot password?',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ),
+                        // TextButton(
+                        //   onPressed: () {
+                        //    Navigator.pushNamed(context, '/forgotPass');
+                        //   },
+                        //   child: const Text(
+                        //     'Forgot password?',
+                        //     style: TextStyle(color: Colors.white),
+                        //   ),
+                        // ),
                         const SizedBox(width: 16),
                         TextButton(
                           onPressed: () {

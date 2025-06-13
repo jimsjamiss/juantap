@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:juantap/pages/admin/admin.dart';
 import 'package:juantap/pages/responders/responder.dart';
@@ -29,7 +30,7 @@ class JuanTap extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'JuanTap',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const AuthGate(), // NEW: Auth checker
+      home: const AuthGate(),
       routes: {
         '/home': (context) => HomePage(),
         '/login': (context) => LoginPage(),
@@ -41,19 +42,26 @@ class JuanTap extends StatelessWidget {
         '/contact_lists_requests': (context) => ContactListsRequestsPage(),
         '/adminDashboard': (context) => const admin(),
         '/responderDashboard': (context) => const ResponderDashboard(),
-        // '/call_page': (context) => CallPage
-        //   (
-        //     userID: FirebaseAuth.instance.currentUser!.uid,
-        //     userName: FirebaseAuth.instance.currentUser!.displayName ?? 'User',
-        //   ),
       },
     );
   }
 }
 
-// NEW: Auth Gate to handle login state
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
+
+  Future<Widget> _determineHomeScreen(User user) async {
+    final roleSnapshot = await FirebaseDatabase.instance.ref('users/${user.uid}/role').get();
+    final role = roleSnapshot.value;
+
+    if (role == 'admin') {
+      return const admin();
+    } else if (role == 'responder') {
+      return const ResponderDashboard();
+    } else {
+      return const HomePage();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,11 +69,23 @@ class AuthGate extends StatelessWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SplashScreen(); // while loading
+          return const SplashScreen(); // While loading
         } else if (snapshot.hasData) {
-          return HomePage(); // user is logged in
+          // If user is logged in, determine role
+          return FutureBuilder<Widget>(
+            future: _determineHomeScreen(snapshot.data!),
+            builder: (context, futureSnapshot) {
+              if (futureSnapshot.connectionState == ConnectionState.waiting) {
+                return const SplashScreen(); // Waiting for role fetch
+              } else if (futureSnapshot.hasData) {
+                return futureSnapshot.data!;
+              } else {
+                return const LoginPage(); // Fallback on error
+              }
+            },
+          );
         } else {
-          return LoginPage(); // not logged in
+          return const LoginPage(); // Not logged in
         }
       },
     );

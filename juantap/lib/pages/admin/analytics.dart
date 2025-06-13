@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:fl_chart/fl_chart.dart';
 
 class AdminAnalyticsPage extends StatefulWidget {
@@ -9,13 +10,75 @@ class AdminAnalyticsPage extends StatefulWidget {
 }
 
 class _AdminAnalyticsPageState extends State<AdminAnalyticsPage> {
-  int selectedMonth = 11; // December (0-indexed)
+  int selectedMonth = DateTime.now().month - 1;
   final List<String> months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
   ];
-  final List<int> sosCounts = [10, 15, 12, 20, 18, 25, 30, 28, 22, 18, 26, 40];
-  final List<int> activeUsers = [5, 18, 20, 24, 30, 32, 33, 34, 36, 40, 50, 68];
+
+  List<int> sosCounts = List.filled(12, 0);
+  List<int> activeUsers = List.filled(12, 0);
+
+  @override
+  void initState() {
+    super.initState();
+    fetchSOSCounts();
+    fetchActiveUsers();
+  }
+
+  void fetchSOSCounts() async {
+    final dbRef = FirebaseDatabase.instance.ref('sos_alerts');
+    final snapshot = await dbRef.get();
+
+    List<int> counts = List.filled(12, 0);
+
+    for (final user in snapshot.children) {
+      for (final alert in user.children) {
+        final timestamp = alert.child('location').child('timestamp').value?.toString();
+        if (timestamp != null) {
+          try {
+            final date = DateTime.parse(timestamp);
+            counts[date.month - 1]++;
+          } catch (_) {
+            // Ignore invalid formats
+          }
+        }
+      }
+    }
+
+    setState(() {
+      sosCounts = counts;
+    });
+  }
+
+  void fetchActiveUsers() async {
+    final dbRef = FirebaseDatabase.instance.ref('responder_reports');
+    final snapshot = await dbRef.get();
+
+    Set<String> seen = {};
+    List<int> counts = List.filled(12, 0);
+
+    for (final user in snapshot.children) {
+      for (final report in user.children) {
+        final dateStr = report.child('date').value?.toString();
+        if (dateStr != null && dateStr.contains("/")) {
+          final parts = dateStr.split("/");
+          if (parts.length >= 3) {
+            final month = int.tryParse(parts[0]) ?? 0;
+            final uniqueKey = '${user.key}_${report.key}';
+            if (!seen.contains(uniqueKey) && month >= 1 && month <= 12) {
+              seen.add(uniqueKey);
+              counts[month - 1]++;
+            }
+          }
+        }
+      }
+    }
+
+    setState(() {
+      activeUsers = counts;
+    });
+  }
 
   List<FlSpot> getSpots() {
     return List.generate(
@@ -43,8 +106,8 @@ class _AdminAnalyticsPageState extends State<AdminAnalyticsPage> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Column(
           children: [
-            const Text('December Statistics',
-                style: TextStyle(color: Colors.white, fontSize: 16)),
+            Text('${months[selectedMonth]} Statistics',
+                style: const TextStyle(color: Colors.white, fontSize: 16)),
             const SizedBox(height: 4),
             Text('${sosCounts[selectedMonth]}',
                 style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white)),
@@ -70,7 +133,14 @@ class _AdminAnalyticsPageState extends State<AdminAnalyticsPage> {
                       ),
                     ),
                     leftTitles: AxisTitles(
-                      sideTitles: SideTitles(showTitles: true),
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 28,
+                        getTitlesWidget: (value, _) {
+                          return Text(value.toInt().toString(),
+                              style: const TextStyle(fontSize: 10, color: Colors.white));
+                        },
+                      ),
                     ),
                     rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
                     topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),

@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "201901470099",
+    "firebase_url": "https://juantap-db-2dbeb-default-rtdb.firebaseio.com",
     "project_id": "juantap-db-2dbeb",
     "storage_bucket": "juantap-db-2dbeb.firebasestorage.app"
   },

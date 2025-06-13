@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -48,12 +49,27 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       final lat = data['location']['lat'];
       final lng = data['location']['lng'];
 
-      // Show a dialog
+      final staticMapUrl =
+          'https://maps.googleapis.com/maps/api/staticmap?center=$lat,$lng'
+          '&zoom=16&size=600x300&maptype=roadmap'
+          '&markers=color:red%7Clabel:S%7C$lat,$lng'
+          '&key=AIzaSyCnHDdDupstvWoU408P-OcsO0-UMg7mDxs';
+
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
           title: Text('🚨 EMERGENCY ALERT from $username'),
-          content: Text('Location: $lat, $lng'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Live location received:'),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(staticMapUrl, fit: BoxFit.cover),
+              ),
+            ],
+          ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: Text('Dismiss')),
           ],
@@ -61,6 +77,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       );
     });
   }
+
 
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -406,8 +423,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     final userRef = FirebaseDatabase.instance.ref('users/$uid');
     final contactsRef = FirebaseDatabase.instance.ref('contacts/$uid');
     final sosRef = FirebaseDatabase.instance.ref('sos_alerts');
+    final responderRef = FirebaseDatabase.instance.ref('responder_alerts');
 
-    // 1. Get current user info
+    // 1. Get user info
     final userSnapshot = await userRef.get();
     final userData = Map<String, dynamic>.from(userSnapshot.value as Map);
     final username = userData['username'] ?? 'Unknown';
@@ -415,28 +433,38 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     // 2. Get real-time location
     final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
 
-    // 3. Get contact list
+    // 3. Compose alert data
+    final alertData = {
+      'username': username,
+      'userId': uid,
+      'timestamp': DateTime.now().toIso8601String(),
+      'location': {
+        'lat': position.latitude,
+        'lng': position.longitude,
+      },
+    };
+
+    // 4. Get contact list and send SOS
     final contactsSnapshot = await contactsRef.get();
-    if (!contactsSnapshot.exists) return;
-
-    final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
-
-    // 4. Send SOS alert to each contact
-    for (final contactId in contacts.keys) {
-      await sosRef.child(contactId).child(uid).set({
-        'username': username,
-        'timestamp': DateTime.now().toIso8601String(),
-        'location': {
-          'lat': position.latitude,
-          'lng': position.longitude,
-        }
-      });
+    if (contactsSnapshot.exists) {
+      final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
+      for (final contactId in contacts.keys) {
+        await sosRef.child(contactId).child(uid).set(alertData);
+      }
     }
 
-    // 5. Optional: Show local confirmation
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('SOS sent to your contacts'), backgroundColor: Colors.redAccent),
-    );
+    // 5. Send SOS to responders
+    await responderRef.push().set(alertData);
+
+    // 6. Confirmation
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('SOS sent to your contacts and responders'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   void _confirmAndSendSOS() {

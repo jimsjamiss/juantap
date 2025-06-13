@@ -1,45 +1,66 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 
-class AdminIncidentListPage extends StatelessWidget {
+class AdminIncidentListPage extends StatefulWidget {
   const AdminIncidentListPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final List<Map<String, String>> incidents = [
-      {
-        'name': 'Juan Dela Cruz',
-        'location': 'Brgy. Opao, Umapad',
-        'image': 'https://i.imgur.com/8Km9tLL.jpg',
-        'reason': 'no response',
-        'time': '12:04 am',
-        'date': '02/14/2025'
-      },
-      {
-        'name': 'Kai sotto ginulay ang munggo',
-        'location': 'Brgy. Opao, Looc',
-        'image': 'https://i.imgur.com/QCNbOAo.png',
-        'reason': 'SOS Alert',
-        'time': '01:00 am',
-        'date': '02/13/2025'
-      },
-      {
-        'name': 'Tralalio Tropa Lang',
-        'location': 'Brgy. Opao, Umapad',
-        'image': 'https://i.imgur.com/BoN9kdC.png',
-        'reason': 'SOS Alert',
-        'time': '7:04 am',
-        'date': '02/12/2025'
-      },
-      {
-        'name': 'Biningit',
-        'location': 'Brgy. Opao, Umapad',
-        'image': 'https://i.imgur.com/uQw7pDa.jpg',
-        'reason': 'no response',
-        'time': '12:04 am',
-        'date': '02/11/2025'
-      },
-    ];
+  State<AdminIncidentListPage> createState() => _AdminIncidentListPageState();
+}
 
+class _AdminIncidentListPageState extends State<AdminIncidentListPage> {
+  List<Map<String, String>> incidents = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchIncidents();
+  }
+
+  Future<void> fetchIncidents() async {
+    try {
+      final dbRef = FirebaseDatabase.instance.ref().child('responder_reports');
+      final snapshot = await dbRef.get();
+
+      if (snapshot.exists) {
+        final Map data = snapshot.value as Map;
+        final List<Map<String, String>> loaded = [];
+
+        data.forEach((responderId, reportGroup) {
+          final reports = Map<String, dynamic>.from(reportGroup);
+          reports.forEach((reportId, reportData) {
+            final report = Map<String, dynamic>.from(reportData);
+            loaded.add({
+              'name': responderId, // Can replace with actual username if needed
+              'location': report['location'] ?? 'Unknown',
+              'image': 'https://i.imgur.com/8Km9tLL.jpg',
+              'reason': report['description'] ?? 'N/A',
+              'time': report['time'] ?? '',
+              'date': report['date'] ?? '',
+            });
+          });
+        });
+
+        setState(() {
+          incidents = loaded;
+          isLoading = false;
+        });
+      } else {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching incident reports: $e');
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF2A9D8F),
       appBar: AppBar(
@@ -73,7 +94,13 @@ class AdminIncidentListPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: ListView.builder(
+              child: isLoading
+                  ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                  : incidents.isEmpty
+                  ? const Center(
+                child: Text('No reports found', style: TextStyle(color: Colors.white)),
+              )
+                  : ListView.builder(
                 itemCount: incidents.length,
                 itemBuilder: (context, index) {
                   final incident = incidents[index];
@@ -124,7 +151,7 @@ class AdminIncidentListPage extends StatelessWidget {
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Text('Time in location\n${incident['time']}',
+                                    Text('Time\n${incident['time']}',
                                         style: const TextStyle(fontSize: 12, color: Colors.black)),
                                     Text('Reason\n${incident['reason']}',
                                         style: const TextStyle(fontSize: 12, color: Colors.black)),

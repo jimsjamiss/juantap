@@ -1,8 +1,18 @@
-
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-class LocationOfUserPage extends StatelessWidget {
+class LocationOfUserPage extends StatefulWidget {
   const LocationOfUserPage({super.key});
+
+  @override
+  State<LocationOfUserPage> createState() => _LocationOfUserPageState();
+}
+
+class _LocationOfUserPageState extends State<LocationOfUserPage> {
+  final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _dateController = TextEditingController();
+  final TextEditingController _timeController = TextEditingController();
 
   void _showIncidentReportDialog(BuildContext context) {
     showDialog(
@@ -19,24 +29,19 @@ class LocationOfUserPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset(
-                  'assets/shield.png', // Make sure this exists!
-                  height: 80,
+                Image.asset('assets/shield.png', height: 80,
                   errorBuilder: (_, __, ___) => const Icon(Icons.security, size: 60),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'Incident Report',
+                const Text('Incident Report',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
-                _buildTextField('Incident Description', 'Enter a brief description of the incident'),
+                _buildTextField('Incident Description', 'Enter a brief description', _descriptionController),
                 const SizedBox(height: 12),
-                _buildTextField('Date', ''),
+                _buildTextField('Date', 'MM/DD/YYYY', _dateController),
                 const SizedBox(height: 12),
-                _buildTextField('Time', ''),
-                const SizedBox(height: 12),
-                _buildTextField('Action Taken', 'Describe any action you took'),
+                _buildTextField('Time', 'HH:MM AM/PM', _timeController),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
@@ -48,7 +53,7 @@ class LocationOfUserPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(30),
                       ),
                     ),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: _submitIncidentReport,
                     child: const Text('Submit Incident Report'),
                   ),
                 ),
@@ -60,13 +65,35 @@ class LocationOfUserPage extends StatelessWidget {
     );
   }
 
-  static Widget _buildTextField(String label, String hint) {
+  void _submitIncidentReport() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final reportRef = FirebaseDatabase.instance
+        .ref('responder_reports/${user.uid}')
+        .push();
+
+    await reportRef.set({
+      'description': _descriptionController.text.trim(),
+      'date': _dateController.text.trim(),
+      'time': _timeController.text.trim(),
+      'location': 'Brgy. Opao, Zone 3',
+    });
+
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted successfully!')),
+    );
+  }
+
+  static Widget _buildTextField(String label, String hint, TextEditingController controller) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
         const SizedBox(height: 6),
         TextField(
+          controller: controller,
           decoration: InputDecoration(
             hintText: hint,
             filled: true,
@@ -97,8 +124,7 @@ class LocationOfUserPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Location of the user',
+            const Text('Location of the user',
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
@@ -131,25 +157,17 @@ class LocationOfUserPage extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Juan Dela Cruz',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Text('Juan Dela Cruz',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                             ),
-                            Text(
-                              'Brgy. Opao, Umapad',
-                              style: TextStyle(
-                                color: Colors.white70,
-                              ),
+                            Text('Brgy. Opao, Umapad',
+                              style: TextStyle(color: Colors.white70),
                             ),
                           ],
                         ),
                       ),
                       Image.asset(
-                        'assets/badge.png',
-                        height: 40,
+                        'assets/badge.png', height: 40,
                         errorBuilder: (_, __, ___) => const Icon(Icons.verified, color: Colors.white),
                       ),
                     ],
@@ -176,8 +194,7 @@ class LocationOfUserPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  const Text(
-                    'Is the Incident resolved?',
+                  const Text('Is the Incident resolved?',
                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                   const SizedBox(height: 10),
