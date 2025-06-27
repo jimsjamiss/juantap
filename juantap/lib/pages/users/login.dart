@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:juantap/pages/users/home.dart';
 import 'package:firebase_database/firebase_database.dart';
-import '../responders/responder.dart';
+import 'package:juantap/pages/responders/responder.dart';
 import '../admin/admin.dart';
+import 'package:juantap/pages/users/signup.dart';
 
 class Login extends StatelessWidget {
   const Login({super.key});
@@ -33,9 +34,22 @@ class _LoginPageState extends State<LoginPage> {
   bool _isPasswordVisible = false;
   bool _isLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _emailController.addListener(_checkFormValid);
+    _passwordController.addListener(_checkFormValid);
+  }
+
   void _checkFormValid() {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
     setState(() {
-      _isButtonEnabled = _formKey.currentState?.validate() ?? false;
+      _isButtonEnabled =
+          email.isNotEmpty &&
+              RegExp(r'\S+@\S+\.\S+').hasMatch(email) &&
+              password.length >= 6;
     });
   }
 
@@ -118,9 +132,10 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-
   @override
   void dispose() {
+    _emailController.removeListener(_checkFormValid);
+    _passwordController.removeListener(_checkFormValid);
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -163,7 +178,6 @@ class _LoginPageState extends State<LoginPage> {
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Form(
                 key: _formKey,
-                onChanged: _checkFormValid,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -207,9 +221,7 @@ class _LoginPageState extends State<LoginPage> {
                         prefixIcon: const Icon(Icons.key_outlined),
                         suffixIcon: IconButton(
                           icon: Icon(
-                            _isPasswordVisible
-                                ? Icons.visibility
-                                : Icons.visibility_off,
+                            _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
                             color: Colors.grey,
                           ),
                           onPressed: () {
@@ -251,8 +263,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.black),
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
                         )
                             : const Text(
                           'Login',
@@ -268,24 +279,15 @@ class _LoginPageState extends State<LoginPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // TextButton(
-                        //   onPressed: () {
-                        //    Navigator.pushNamed(context, '/forgotPass');
-                        //   },
-                        //   child: const Text(
-                        //     'Forgot password?',
-                        //     style: TextStyle(color: Colors.white),
-                        //   ),
-                        // ),
                         const SizedBox(width: 16),
                         TextButton(
                           onPressed: () {
-                            Navigator.pushNamed(context, '/registration');
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const Registration()),
+                            );
                           },
-                          child: const Text(
-                            'Register here!',
-                            style: TextStyle(color: Colors.white),
-                          ),
+                          child: const Text('Register here!', style: TextStyle(color: Colors.white)),
                         ),
                       ],
                     ),

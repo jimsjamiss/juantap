@@ -1,10 +1,16 @@
 import 'dart:async';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
+import 'package:juantap/pages/users/view_alert_location.dart';
+import 'package:vibration/vibration.dart';
+import 'package:audioplayers/audioplayers.dart';
+
+
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -21,7 +27,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   String? profileImageUrl;
   final _user = FirebaseAuth.instance.currentUser;
 
-  Timer? _safetyTimer;
+  final Set<String> _processedAlertKeys = {};
+  AudioPlayer? _player;
+  Timer? _vibrationTimer;
   bool _checkInActive = false;
 
   @override
@@ -41,43 +49,77 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _listenToContactRequests();
     _listenToSosAlerts();
   }
+  AudioPlayer? player;
+
   void _listenToSosAlerts() {
     final uid = FirebaseAuth.instance.currentUser!.uid;
-    FirebaseDatabase.instance.ref('sos_alerts/$uid').onChildAdded.listen((event) {
-      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-      final username = data['username'];
-      final lat = data['location']['lat'];
-      final lng = data['location']['lng'];
+    final sosRef = FirebaseDatabase.instance.ref('sos_alerts/$uid');
 
-      final staticMapUrl =
-          'https://maps.googleapis.com/maps/api/staticmap?center=$lat,$lng'
-          '&zoom=16&size=600x300&maptype=roadmap'
-          '&markers=color:red%7Clabel:S%7C$lat,$lng'
-          '&key=AIzaSyCnHDdDupstvWoU408P-OcsO0-UMg7mDxs';
+    sosRef.onChildAdded.listen((event) async {
+      final locationData = event.snapshot.child('location').value;
+      if (locationData == null || locationData is! Map) return;
 
+      final data = Map<String, dynamic>.from(locationData as Map);
+      final username = data['username'] ?? 'Unknown';
+      final lat = (data['lat'] as num).toDouble();
+      final lng = (data['lng'] as num).toDouble();
+      final alertSenderId = event.snapshot.key ?? 'unknown';
+
+      // Start custom vibration loop
+      if (await Vibration.hasVibrator() ?? false) {
+        _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+          Vibration.vibrate(duration: 1000);
+        });
+      }
+
+      // Play emergency ringtone
+      player = AudioPlayer();
+      try {
+        await player!.setSource(AssetSource('audio/lingling.mp3'));
+        await player!.setReleaseMode(ReleaseMode.loop);
+        await player!.resume();
+      } catch (e) {
+        print('Audio error: $e');
+      }
+
+      // Show alert dialog
+      if (!mounted) return;
       showDialog(
         context: context,
+        barrierDismissible: false,
         builder: (_) => AlertDialog(
           title: Text('🚨 EMERGENCY ALERT from $username'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Live location received:'),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(staticMapUrl, fit: BoxFit.cover),
-              ),
-            ],
-          ),
+          content: Text('Location: $lat, $lng'),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: Text('Dismiss')),
+            TextButton(
+              onPressed: () {
+                _vibrationTimer?.cancel();
+                Vibration.cancel();
+                player?.stop();
+                Navigator.pop(context);
+              },
+              child: const Text('Dismiss'),
+            ),
+            TextButton(
+              onPressed: () {
+                _vibrationTimer?.cancel();
+                Vibration.cancel();
+                player?.stop();
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ViewAlertLocationPage(userId: alertSenderId),
+                  ),
+                );
+              },
+              child: const Text('View Location'),
+            ),
           ],
         ),
       );
     });
   }
-
 
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -149,8 +191,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
     setState(() => _checkInActive = true);
 
-    _safetyTimer?.cancel();
-    _safetyTimer = Timer.periodic(Duration(seconds: 10), (_) {
+    _vibrationTimer?.cancel();
+    _vibrationTimer = Timer.periodic(Duration(seconds: 10), (_) {
       _showSafetyPrompt(context);
     });
   }
@@ -347,7 +389,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   Future<void> _stopCheckIn(BuildContext context) async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
-    _safetyTimer?.cancel();
+    _vibrationTimer?.cancel();
     setState(() => _checkInActive = false);
 
     await FirebaseDatabase.instance
@@ -416,56 +458,64 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     );
   }
   Future<void> sendSosAlert() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
 
-    final uid = user.uid;
-    final userRef = FirebaseDatabase.instance.ref('users/$uid');
-    final contactsRef = FirebaseDatabase.instance.ref('contacts/$uid');
-    final sosRef = FirebaseDatabase.instance.ref('sos_alerts');
-    final responderRef = FirebaseDatabase.instance.ref('responder_alerts');
+      final uid = user.uid;
+      final userRef = FirebaseDatabase.instance.ref('users/$uid');
+      final contactsRef = FirebaseDatabase.instance.ref('contacts/$uid');
+      final sosRef = FirebaseDatabase.instance.ref('sos_alerts');
+      final responderAlertRef = FirebaseDatabase.instance.ref('responder_alerts');
 
-    // 1. Get user info
-    final userSnapshot = await userRef.get();
-    final userData = Map<String, dynamic>.from(userSnapshot.value as Map);
-    final username = userData['username'] ?? 'Unknown';
+      final userSnapshot = await userRef.get();
+      if (!userSnapshot.exists) return;
 
-    // 2. Get real-time location
-    final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final userData = Map<String, dynamic>.from(userSnapshot.value as Map);
+      final username = userData['username'] ?? 'Unknown';
 
-    // 3. Compose alert data
-    final alertData = {
-      'username': username,
-      'userId': uid,
-      'timestamp': DateTime.now().toIso8601String(),
-      'location': {
-        'lat': position.latitude,
-        'lng': position.longitude,
-      },
-    };
-
-    // 4. Get contact list and send SOS
-    final contactsSnapshot = await contactsRef.get();
-    if (contactsSnapshot.exists) {
-      final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
-      for (final contactId in contacts.keys) {
-        await sosRef.child(contactId).child(uid).set(alertData);
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        permission = await Geolocator.requestPermission();
       }
-    }
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return;
 
-    // 5. Send SOS to responders
-    await responderRef.push().set(alertData);
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
 
-    // 6. Confirmation
-    if (context.mounted) {
+      final contactsSnapshot = await contactsRef.get();
+      if (contactsSnapshot.exists) {
+        final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
+        for (final contactId in contacts.keys) {
+          await sosRef.child(contactId).child(uid).child('location').set({
+            'username': username,
+            'timestamp': DateTime.now().toIso8601String(),
+            'lat': position.latitude,
+            'lng': position.longitude,
+          });
+        }
+      }
+
+      // Send to responders
+      final newResponderRef = FirebaseDatabase.instance.ref('responder_alerts').push();
+      await newResponderRef.set({
+        'location': {
+          'lat': position.latitude,
+          'lng': position.longitude,
+          'timestamp': DateTime.now().toIso8601String(),
+          'userId': uid,
+          'username': username,
+        }
+      });
+
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('SOS sent to your contacts and responders'),
-          backgroundColor: Colors.redAccent,
-        ),
+        SnackBar(content: Text('🚨 SOS sent successfully'), backgroundColor: Colors.redAccent),
       );
+    } catch (e) {
+      print('❌ Error sending SOS: $e');
     }
   }
+
 
   void _confirmAndSendSOS() {
     int secondsLeft = 5;
@@ -517,10 +567,11 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
 
+
   @override
   void dispose() {
     _rippleController.dispose();
-    _safetyTimer?.cancel();
+    _vibrationTimer?.cancel();
     super.dispose();
   }
 
@@ -738,6 +789,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       ),
     );
   }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<Timer?>('_vibrationTimer', _vibrationTimer));
+  }
 }
 // --- Custom Components ---
 
@@ -806,6 +863,5 @@ class BottomMenuButton extends StatelessWidget {
     );
   }
 }
-
 
 

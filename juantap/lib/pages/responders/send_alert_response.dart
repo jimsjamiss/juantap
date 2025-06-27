@@ -1,11 +1,52 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'location_of_the_user.dart';
-import 'responder.dart'; // ✅ Import the ResponderDashboard
+import 'responder.dart';
 
-class SendAlertResponsePage extends StatelessWidget {
+class SendAlertResponsePage extends StatefulWidget {
   final Map<String, String> data;
 
   const SendAlertResponsePage({super.key, required this.data});
+
+  @override
+  State<SendAlertResponsePage> createState() => _SendAlertResponsePageState();
+}
+
+class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
+  Map<String, dynamic>? userInfo;
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserInfo();
+  }
+
+  void _fetchUserInfo() async {
+    final userId = widget.data['userId'];
+    if (userId == null || userId.isEmpty) {
+      debugPrint("❌ No userId provided in widget.data: ${widget.data}");
+      setState(() => isLoading = false);
+      return;
+    }
+
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref('users/$userId').get();
+      if (snapshot.exists) {
+        debugPrint("✅ User data found for userId: $userId");
+        setState(() {
+          userInfo = Map<String, dynamic>.from(snapshot.value as Map);
+          isLoading = false;
+        });
+      } else {
+        debugPrint("❌ No data found for userId: $userId");
+        setState(() => isLoading = false);
+      }
+    } catch (e) {
+      debugPrint("❌ Error fetching user data: $e");
+      setState(() => isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +77,9 @@ class SendAlertResponsePage extends StatelessWidget {
           )
         ],
       ),
-      body: Center(
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : Center(
         child: Container(
           margin: const EdgeInsets.all(16),
           padding: const EdgeInsets.all(16),
@@ -56,10 +99,12 @@ class SendAlertResponsePage extends StatelessWidget {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Image.network(
-                      data['image']!,
+                      widget.data['image'] ?? 'https://via.placeholder.com/70',
                       width: 70,
                       height: 70,
                       fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.error, color: Colors.white),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -67,16 +112,23 @@ class SendAlertResponsePage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(data['name']!,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold)),
+                        Text(
+                          widget.data['name'] ?? '',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         const SizedBox(height: 4),
-                        Text(data['location']!,
-                            style: const TextStyle(color: Colors.white70)),
-                        const Text("# 123456789",
-                            style: TextStyle(color: Colors.white70)),
+                        Text(
+                          widget.data['location'] ?? '',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                        const Text(
+                          "# 123456789",
+                          style: TextStyle(color: Colors.white70),
+                        ),
                       ],
                     ),
                   ),
@@ -89,22 +141,21 @@ class SendAlertResponsePage extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-              _infoRow("Birthdate", "June 17, 2002"),
-              _infoRow("Nationality", "Filipino"),
-              _infoRow("Email Address", "TAYO@gmail.com"),
-              _infoRow("Current Address", "BLOCK 4 LOT 14, Buaya, LAPU-LAPU CITY, CEBU"),
+              _infoRow("Birthdate", userInfo != null ? (userInfo!['birthdate'] ?? 'N/A') : 'N/A'),
+              _infoRow("Nationality", userInfo != null ? (userInfo!['nationality'] ?? 'Filipino') : 'Filipino'),
+              _infoRow("Email Address", userInfo != null ? (userInfo!['email'] ?? 'N/A') : 'N/A'),
+              _infoRow("Phone Number", userInfo != null ? (userInfo!['phone'] ?? 'N/A') : 'N/A'),
+              _infoRow("Current Address", userInfo != null ? (userInfo!['address'] ?? 'BLOCK 4 LOT 14, Buaya, LAPU-LAPU CITY, CEBU') : 'BLOCK 4 LOT 14, Buaya, LAPU-LAPU CITY, CEBU'),
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _infoMini("Time in location", data['time']!),
-                  _infoMini("Reason", data['reason']!),
-                  _infoMini("Date", data['date']!),
+                  _infoMini("Time", widget.data['time'] ?? ''),
+                  _infoMini("Reason", widget.data['reason'] ?? ''),
+                  _infoMini("Date", widget.data['date'] ?? ''),
                 ],
               ),
               const SizedBox(height: 16),
-
-              // ✅ Button navigates to LocationOfUserPage
               GestureDetector(
                 onTap: () {
                   Navigator.push(
