@@ -11,7 +11,7 @@ class Registration extends StatefulWidget {
   State<Registration> createState() => _RegistrationState();
 }
 
-class _RegistrationState extends State<Registration> {
+class _RegistrationState extends State<Registration> with WidgetsBindingObserver {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -21,11 +21,33 @@ class _RegistrationState extends State<Registration> {
 
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
+  bool _isKeyboardVisible = false;
+
   String _selectedRole = 'user';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    final bottomInset = WidgetsBinding.instance.window.viewInsets.bottom;
+    setState(() {
+      _isKeyboardVisible = bottomInset > 0;
+    });
+  }
 
   String _generateOtp() {
     final random = Random();
-    return (random.nextInt(900000) + 100000).toString(); // 6-digit OTP
+    return (random.nextInt(900000) + 100000).toString();
   }
 
   Future<void> _submitForm() async {
@@ -59,7 +81,10 @@ class _RegistrationState extends State<Registration> {
             _showOtpModal(otpCode);
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Failed to send OTP email."), backgroundColor: Colors.red),
+              const SnackBar(
+                content: Text("Failed to send OTP email."),
+                backgroundColor: Colors.red,
+              ),
             );
           }
         }
@@ -112,12 +137,16 @@ class _RegistrationState extends State<Registration> {
                 if (_otpController.text.trim() == otpCode) {
                   Navigator.of(context).pop();
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Email verified!"), backgroundColor: Colors.green),
+                    const SnackBar(
+                        content: Text("Email verified!"),
+                        backgroundColor: Colors.green),
                   );
                   _clearFormAndGoBack();
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Invalid OTP."), backgroundColor: Colors.red),
+                    const SnackBar(
+                        content: Text("Invalid OTP."),
+                        backgroundColor: Colors.red),
                   );
                 }
               },
@@ -142,14 +171,14 @@ class _RegistrationState extends State<Registration> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF417B63),
-      body: Stack(
-        children: [
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              height: 180,
+      resizeToAvoidBottomInset: true,
+      body: SafeArea(
+        child: Column(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              height: _isKeyboardVisible ? 0 : 180,
+              width: double.infinity,
               decoration: const BoxDecoration(
                 color: Color(0xFFF7F6D9),
                 borderRadius: BorderRadius.only(
@@ -158,7 +187,9 @@ class _RegistrationState extends State<Registration> {
               ),
               alignment: Alignment.bottomCenter,
               padding: const EdgeInsets.only(bottom: 24),
-              child: const Text(
+              child: _isKeyboardVisible
+                  ? const SizedBox.shrink()
+                  : const Text(
                 "Create Account",
                 style: TextStyle(
                   fontSize: 22,
@@ -167,29 +198,46 @@ class _RegistrationState extends State<Registration> {
                 ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(32, 220, 32, 16),
-            child: Center(
-              child: SingleChildScrollView(
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(32, 16, 32, 16),
                 child: Form(
                   key: _formKey,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _buildField(_nameController, "Full Name", validator: (v) => v!.isEmpty ? "Required" : null),
-                      _buildField(_emailController, "Email Address", validator: (v) {
-                        if (v!.isEmpty) return "Required";
-                        if (!RegExp(r'\S+@\S+\.\S+').hasMatch(v)) return "Invalid email";
-                        return null;
-                      }),
-                      _buildField(_phoneController, "Phone Number", validator: (v) => v!.isEmpty ? "Required" : null),
-                      _buildField(_passwordController, "Password", obscureText: !_isPasswordVisible, toggle: () {
-                        setState(() => _isPasswordVisible = !_isPasswordVisible);
-                      }, validator: (v) => v!.length < 6 ? "Min 6 chars" : null),
-                      _buildField(_confirmPasswordController, "Confirm Password", obscureText: !_isConfirmPasswordVisible, toggle: () {
-                        setState(() => _isConfirmPasswordVisible = !_isConfirmPasswordVisible);
-                      }, validator: (v) => v != _passwordController.text ? "Passwords don't match" : null),
+                      _buildField(_nameController, "Full Name",
+                          validator: (v) =>
+                          v!.isEmpty ? "Required" : null),
+                      _buildField(_emailController, "Email Address",
+                          validator: (v) {
+                            if (v!.isEmpty) return "Required";
+                            if (!RegExp(r'\S+@\S+\.\S+').hasMatch(v)) {
+                              return "Invalid email";
+                            }
+                            return null;
+                          }),
+                      _buildField(_phoneController, "Phone Number",
+                          validator: (v) =>
+                          v!.isEmpty ? "Required" : null),
+                      _buildField(_passwordController, "Password",
+                          obscureText: !_isPasswordVisible,
+                          toggle: () {
+                            setState(() =>
+                            _isPasswordVisible = !_isPasswordVisible);
+                          },
+                          validator: (v) =>
+                          v!.length < 6 ? "Min 6 chars" : null),
+                      _buildField(_confirmPasswordController,
+                          "Confirm Password",
+                          obscureText: !_isConfirmPasswordVisible,
+                          toggle: () {
+                            setState(() => _isConfirmPasswordVisible =
+                            !_isConfirmPasswordVisible);
+                          },
+                          validator: (v) => v != _passwordController.text
+                              ? "Passwords don't match"
+                              : null),
                       const SizedBox(height: 32),
                       SizedBox(
                         width: double.infinity,
@@ -206,22 +254,23 @@ class _RegistrationState extends State<Registration> {
                           child: const Text("Sign Up"),
                         ),
                       ),
-                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildField(TextEditingController controller, String hint,
-      {bool obscureText = false, VoidCallback? toggle, String? Function(String?)? validator}) {
+      {bool obscureText = false,
+        VoidCallback? toggle,
+        String? Function(String?)? validator}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: TextFormField(
         controller: controller,
         obscureText: obscureText,
@@ -239,7 +288,9 @@ class _RegistrationState extends State<Registration> {
           suffixIcon: toggle != null
               ? IconButton(
             icon: Icon(
-              obscureText ? Icons.visibility_off : Icons.visibility,
+              obscureText
+                  ? Icons.visibility_off
+                  : Icons.visibility,
               color: Colors.white70,
             ),
             onPressed: toggle,

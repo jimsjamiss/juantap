@@ -27,7 +27,7 @@ class _UserListState extends State<userlist> {
 
       data.forEach((key, value) {
         final user = Map<String, dynamic>.from(value);
-        if (user['role'] == 'user') {
+        if (user['role'] == 'user' && user['status'] != 'deleted') {
           loadedUsers.add({
             'id': key,
             'name': user['username'] ?? 'No Name',
@@ -40,6 +40,18 @@ class _UserListState extends State<userlist> {
         users = loadedUsers;
       });
     }
+  }
+
+  Future<void> softDeleteUser(String userId, String name) async {
+    final dbRef = FirebaseDatabase.instance.ref().child('users/$userId');
+    await dbRef.update({'status': 'deleted'});
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$name deleted')),
+    );
+
+    // Refresh list
+    fetchUsersFromFirebase();
   }
 
   @override
@@ -155,9 +167,7 @@ class _UserListState extends State<userlist> {
                                     TextButton(
                                       onPressed: () {
                                         Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('${user['name']} deleted')),
-                                        );
+                                        softDeleteUser(user['id']!, user['name']!);
                                       },
                                       child: const Text('Delete'),
                                     ),

@@ -636,39 +636,64 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         ],
       ),
       drawer: Drawer(
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFF264653),
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            DrawerHeader(
-              decoration: BoxDecoration(color: Color(0xFF4B8B7A)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundImage: profileImageUrl != null
-                        ? NetworkImage(profileImageUrl!)
-                        : const AssetImage('assets/images/user_profile.png') as ImageProvider,
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    _username,
-                    style: TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                ],
+            UserAccountsDrawerHeader(
+              decoration: const BoxDecoration(color: Color(0xFF2A9D8F)),
+              accountName: GestureDetector(
+                onTap: () {
+                  final controller = TextEditingController(text: _username);
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Edit Name'),
+                      content: TextField(
+                        controller: controller,
+                        decoration: const InputDecoration(hintText: 'Enter your name'),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            if (controller.text.trim().isNotEmpty) {
+                              await FirebaseDatabase.instance.ref("users/${_user!.uid}/username").set(controller.text.trim());
+                              setState(() => _username = controller.text.trim());
+                            }
+                            Navigator.pop(context);
+                          },
+                          child: const Text('Save'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                child: Text(_username, style: const TextStyle(fontSize: 18)),
+              ),
+              accountEmail: const Text("user@juantap.com"),
+              currentAccountPicture: GestureDetector(
+                onTap: () => Navigator.pushNamed(context, '/edit_profile'),
+                child: CircleAvatar(
+                  backgroundColor: Colors.white,
+                  backgroundImage: profileImageUrl != null
+                      ? NetworkImage(profileImageUrl!)
+                      : const AssetImage('assets/images/user_profile.png') as ImageProvider,
+                ),
               ),
             ),
             ListTile(
-              leading: Icon(Icons.account_circle_sharp, color: Colors.green),
-              title: Text('Profile Settings'),
-              onTap: () {
-                Navigator.pushNamed(context, '/edit_profile');
-              },
+              leading: const Icon(Icons.account_circle, color: Colors.white),
+              title: const Text('Profile Settings', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pushNamed(context, '/edit_profile'),
             ),
+            const Divider(color: Colors.white54),
             ListTile(
-              leading: Icon(Icons.logout, color: Colors.redAccent),
-              title: Text('Logout'),
+              leading: const Icon(Icons.logout, color: Colors.white),
+              title: const Text('Logout', style: TextStyle(color: Colors.white)),
               onTap: () async {
                 final shouldLogout = await showDialog<bool>(
                   context: context,
@@ -676,19 +701,14 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     title: const Text('Confirm Logout'),
                     content: const Text('Are you sure you want to log out?'),
                     actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                       TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Cancel'),
-                      ),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                         onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Logout', style: TextStyle(color: Colors.white)),
+                        child: const Text('Logout'),
                       ),
                     ],
                   ),
                 );
-
                 if (shouldLogout == true) {
                   await FirebaseAuth.instance.signOut();
                   if (context.mounted) {
@@ -697,10 +717,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 }
               },
             ),
-
           ],
         ),
       ),
+
       backgroundColor: const Color(0xFF4B8B7A),
       body: Stack(
         children: [
@@ -863,5 +883,3 @@ class BottomMenuButton extends StatelessWidget {
     );
   }
 }
-
-
