@@ -20,6 +20,8 @@ import 'package:juantap/pages/users/contact_lists.dart';
 import 'package:juantap/pages/users/contact_lists_requests.dart';
 import 'package:juantap/pages/responders/edit_responder_profile.dart';
 
+// 🧩 New import for admin login
+import 'package:juantap/pages/admin/admin_login.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,7 +66,14 @@ class JuanTap extends StatelessWidget {
       title: 'JuanTap',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: kIsWeb ? const AdminDashboardPage() : const AuthGate(),
+
+      // 🧭 Show admin login as the first view on Web
+      home: kIsWeb
+          ? (FirebaseAuth.instance.currentUser == null
+          ? const AdminLoginPage()
+          : const AdminDashboardPage())
+          : const AuthGate(),
+
       routes: {
         '/home': (context) => const HomePage(),
         '/login': (context) => const LoginPage(),
@@ -72,11 +81,16 @@ class JuanTap extends StatelessWidget {
         '/edit_profile': (context) => const EditProfilePage(),
         '/maps_location': (context) => const MapsLocation(),
         '/check_in': (context) => CheckInPage(),
-        '/contact_lists': (context) =>  ContactListPage(),
-        '/contact_lists_requests': (context) =>  ContactListsRequestsPage(),
+        '/contact_lists': (context) => ContactListPage(),
+        '/contact_lists_requests': (context) =>
+            ContactListsRequestsPage(),
         '/responderDashboard': (context) => const ResponderDashboard(),
         '/admin': (context) => const AdminDashboardPage(),
-        '/edit_responder_profile': (context) => const EditResponderProfilePage(),
+        '/edit_responder_profile': (context) =>
+        const EditResponderProfilePage(),
+
+        // 🆕 Added route for admin login
+        '/admin_login': (context) => const AdminLoginPage(),
       },
     );
   }
