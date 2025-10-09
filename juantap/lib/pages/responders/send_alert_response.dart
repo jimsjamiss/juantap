@@ -31,7 +31,8 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
     }
 
     try {
-      final snapshot = await FirebaseDatabase.instance.ref('users/$userId').get();
+      final snapshot =
+      await FirebaseDatabase.instance.ref('users/$userId').get();
       if (snapshot.exists) {
         debugPrint("✅ User data found for userId: $userId");
         setState(() {
@@ -71,14 +72,16 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
             icon: const Icon(Icons.description_outlined, color: Colors.white),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Incident Report button clicked')),
+                const SnackBar(
+                    content: Text('Incident Report button clicked')),
               );
             },
           )
         ],
       ),
       body: isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          ? const Center(
+          child: CircularProgressIndicator(color: Colors.white))
           : Center(
         child: Container(
           margin: const EdgeInsets.all(16),
@@ -99,7 +102,8 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Image.network(
-                      widget.data['image'] ?? 'https://via.placeholder.com/70',
+                      userInfo?['profileImage'] ??
+                          'https://via.placeholder.com/70',
                       width: 70,
                       height: 70,
                       fit: BoxFit.cover,
@@ -113,7 +117,7 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.data['name'] ?? '',
+                          userInfo?['username'] ?? 'Loading...',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
@@ -122,12 +126,15 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          widget.data['location'] ?? '',
-                          style: const TextStyle(color: Colors.white70),
+                          userInfo?['address'] ??
+                              'Fetching location...',
+                          style:
+                          const TextStyle(color: Colors.white70),
                         ),
-                        const Text(
-                          "# 123456789",
-                          style: TextStyle(color: Colors.white70),
+                        Text(
+                          userInfo?['phone'] ?? '',
+                          style:
+                          const TextStyle(color: Colors.white70),
                         ),
                       ],
                     ),
@@ -135,17 +142,24 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                   Image.asset(
                     'assets/shield.png',
                     height: 40,
-                    errorBuilder: (_, __, ___) =>
-                    const Icon(Icons.verified_user, color: Colors.white),
+                    errorBuilder: (_, __, ___) => const Icon(
+                        Icons.verified_user,
+                        color: Colors.white),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
-              _infoRow("Birthdate", userInfo != null ? (userInfo!['birthdate'] ?? 'N/A') : 'N/A'),
-              _infoRow("Nationality", userInfo != null ? (userInfo!['nationality'] ?? 'Filipino') : 'Filipino'),
-              _infoRow("Email Address", userInfo != null ? (userInfo!['email'] ?? 'N/A') : 'N/A'),
-              _infoRow("Phone Number", userInfo != null ? (userInfo!['phone'] ?? 'N/A') : 'N/A'),
-              _infoRow("Current Address", userInfo != null ? (userInfo!['address'] ?? 'BLOCK 4 LOT 14, Buaya, LAPU-LAPU CITY, CEBU') : 'BLOCK 4 LOT 14, Buaya, LAPU-LAPU CITY, CEBU'),
+              _infoRow("Birthdate",
+                  userInfo?['birthdate'] ?? 'N/A'),
+              _infoRow("Nationality",
+                  userInfo?['nationality'] ?? 'Filipino'),
+              _infoRow("Email Address",
+                  userInfo?['email'] ?? 'N/A'),
+              _infoRow("Phone Number",
+                  userInfo?['phone'] ?? 'N/A'),
+              _infoRow("Current Address",
+                  userInfo?['address'] ??
+                      'BLOCK 4 LOT 14, Buaya, LAPU-LAPU CITY, CEBU'),
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -160,7 +174,10 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                 onTap: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const LocationOfUserPage()),
+                    MaterialPageRoute(
+                      builder: (_) => LocationOfUserPage(
+                          alertId: widget.data['alertId'] ?? ""),
+                    ),
                   );
                 },
                 child: Container(
@@ -216,7 +233,8 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+        Text(label,
+            style: const TextStyle(color: Colors.white, fontSize: 12)),
         Text(value,
             style: const TextStyle(
                 color: Colors.white,

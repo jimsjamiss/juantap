@@ -7,7 +7,12 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 class LocationOfUserPage extends StatefulWidget {
-  const LocationOfUserPage({super.key});
+  final String alertId; // ✅ we pass the alertId instead of lat/lng
+
+  const LocationOfUserPage({
+    super.key,
+    required this.alertId,
+  });
 
   @override
   State<LocationOfUserPage> createState() => _LocationOfUserPageState();
@@ -25,110 +30,176 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
   @override
   void initState() {
     super.initState();
-    _listenToLocation();
-    _fetchUserLocationFromFirebase();
+    _fetchUserLocation();       // ✅ initial fetch
+    _listenToUserLocation();    // ✅ new live updates
+    _listenToResponderLocation();
   }
 
-  void _listenToLocation() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      await Geolocator.openLocationSettings();
-      return;
-    }
+  String? _username;
+  String? _address; // optional if stored in DB
 
+  void _fetchUserLocation() async {
+    final ref = FirebaseDatabase.instance.ref("responder_alerts/${widget.alertId}/location");
+    final snapshot = await ref.get();
+
+    if (snapshot.exists) {
+      final location = Map<String, dynamic>.from(snapshot.value as Map);
+
+      final lat = (location['lat'] as num?)?.toDouble();
+      final lng = (location['lng'] as num?)?.toDouble();
+
+      setState(() {
+        _userLocation = (lat != null && lng != null) ? LatLng(lat, lng) : null;
+        _username = location['username'] ?? "Unknown User";
+        _address  = location['address'] ?? "Unknown Address";
+      });
+
+      debugPrint("✅ User location loaded: $_userLocation ($_username)");
+      _updateMap();
+    } else {
+      debugPrint("⚠️ No location found for alert ${widget.alertId}");
+    }
+  }
+
+  // ✅ NEW: listen to live user location changes
+  void _listenToUserLocation() {
+    final ref = FirebaseDatabase.instance.ref("responder_alerts/${widget.alertId}/location");
+
+    ref.onValue.listen((event) {
+      if (!event.snapshot.exists) return;
+
+      final location = Map<String, dynamic>.from(event.snapshot.value as Map);
+
+      final lat = (location['lat'] as num?)?.toDouble();
+      final lng = (location['lng'] as num?)?.toDouble();
+
+      if (lat != null && lng != null) {
+        setState(() {
+          _userLocation = LatLng(lat, lng);
+          _username = location['username'] ?? "Unknown User";
+          _address  = location['address'] ?? "Unknown Address";
+        });
+
+        debugPrint("📍 User live location updated: $_userLocation ($_username)");
+        _updateMap();
+      }
+    });
+  }
+
+  void _listenToResponderLocation() async {
     LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       permission = await Geolocator.requestPermission();
     }
 
     _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
     );
 
-    _positionStream!.listen((Position position) {
+    _positionStream!.listen((Position pos) {
       setState(() {
-        _responderLocation = LatLng(position.latitude, position.longitude);
+        _responderLocation = LatLng(pos.latitude, pos.longitude);
       });
-
-      if (_mapController != null && _responderLocation != null) {
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: _responderLocation!,
-              zoom: 17,
-            ),
-          ),
-        );
-      }
-
-      _drawRoute();
+      debugPrint("📍 Responder location updated: $_responderLocation");
+      _updateMap();
     });
   }
 
-  void _fetchUserLocationFromFirebase() async {
-    final sosRef = FirebaseDatabase.instance.ref('sos_alerts');
-    final snapshot = await sosRef.get();
-    if (snapshot.exists) {
-      for (var child in snapshot.children) {
-        final data = child.value as Map?;
-        if (data?['latitude'] != null && data?['longitude'] != null) {
-          _userLocation = LatLng(data!['latitude'], data['longitude']);
-          _drawRoute();
-          break;
-        }
-      }
-    }
-  }
-
-  Future<void> _drawRoute() async {
+  Future<void> _updateMap() async {
     if (_responderLocation == null || _userLocation == null) return;
 
-    const apiKey = 'YOUR_GOOGLE_MAPS_API_KEY';
+    // Add both markers
+    setState(() {
+      _markers = {
+        Marker(
+          markerId: const MarkerId('responder'),
+          position: _responderLocation!,
+          infoWindow: const InfoWindow(title: 'Responder (You)'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        ),
+        Marker(
+          markerId: const MarkerId('user'),
+          position: _userLocation!,
+          infoWindow: InfoWindow(title: _username ?? 'User'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        ),
+      };
+    });
+
+    // Fit camera bounds
+    final bounds = LatLngBounds(
+      southwest: LatLng(
+        (_responderLocation!.latitude < _userLocation!.latitude)
+            ? _responderLocation!.latitude
+            : _userLocation!.latitude,
+        (_responderLocation!.longitude < _userLocation!.longitude)
+            ? _responderLocation!.longitude
+            : _userLocation!.longitude,
+      ),
+      northeast: LatLng(
+        (_responderLocation!.latitude > _userLocation!.latitude)
+            ? _responderLocation!.latitude
+            : _userLocation!.latitude,
+        (_responderLocation!.longitude > _userLocation!.longitude)
+            ? _responderLocation!.longitude
+            : _userLocation!.longitude,
+      ),
+    );
+
+    await Future.delayed(const Duration(milliseconds: 400));
+    _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+
+    // Call Google Directions API
+    const apiKey = 'YOUR_GOOGLE_MAPS_API_KEY'; // 🔑 replace with real
     final url =
-        'https://maps.googleapis.com/maps/api/directions/json?origin=${_responderLocation!.latitude},${_responderLocation!.longitude}&destination=${_userLocation!.latitude},${_userLocation!.longitude}&key=$apiKey';
+        'https://maps.googleapis.com/maps/api/directions/json'
+        '?origin=${_responderLocation!.latitude},${_responderLocation!.longitude}'
+        '&destination=${_userLocation!.latitude},${_userLocation!.longitude}'
+        '&mode=driving'
+        '&key=$apiKey';
 
-    final response = await http.get(Uri.parse(url));
-    final data = json.decode(response.body);
+    try {
+      final response = await http.get(Uri.parse(url));
+      final data = json.decode(response.body);
 
-    if (data['routes'].isNotEmpty) {
-      final points = _decodePolyline(data['routes'][0]['overview_polyline']['points']);
-      setState(() {
-        _polylines = {
-          Polyline(
-            polylineId: const PolylineId('route'),
-            points: points,
-            width: 5,
-            color: Colors.blue,
-          )
-        };
-
-        _markers = {
-          Marker(
-            markerId: const MarkerId('responder'),
-            position: _responderLocation!,
-            infoWindow: const InfoWindow(title: 'Responder'),
-          ),
-          Marker(
-            markerId: const MarkerId('user'),
-            position: _userLocation!,
-            infoWindow: const InfoWindow(title: 'User Location'),
-          ),
-        };
-      });
-
-      // Adjust camera to fit the bounds
-      LatLngBounds bounds;
-      if (_responderLocation!.latitude > _userLocation!.latitude) {
-        bounds = LatLngBounds(southwest: _userLocation!, northeast: _responderLocation!);
+      if (data['status'] == "OK" && data['routes'].isNotEmpty) {
+        final points = _decodePolyline(
+          data['routes'][0]['overview_polyline']['points'],
+        );
+        setState(() {
+          _polylines = {
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: points,
+              width: 5,
+              color: Colors.blue,
+            ),
+          };
+        });
+        debugPrint("✅ Route drawn between responder and user");
       } else {
-        bounds = LatLngBounds(southwest: _responderLocation!, northeast: _userLocation!);
+        // fallback line if no route found
+        setState(() {
+          _polylines = {
+            Polyline(
+              polylineId: const PolylineId('fallback'),
+              points: [_responderLocation!, _userLocation!],
+              width: 4,
+              color: Colors.red,
+              patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+            ),
+          };
+        });
+        debugPrint("⚠️ Directions API returned no route.");
       }
-
-      await Future.delayed(const Duration(milliseconds: 500)); // slight delay for map to settle
-      _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50));
+    } catch (e) {
+      debugPrint("❌ Directions API error: $e");
     }
   }
-
 
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> polyline = [];
@@ -161,6 +232,7 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     return polyline;
   }
 
+  // --- Incident Report (unchanged) ---
   void _showIncidentReportDialog(BuildContext context, String status) {
     showDialog(
       context: context,
@@ -168,29 +240,40 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Container(
           padding: const EdgeInsets.all(16),
-          decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.all(Radius.circular(20))),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.all(Radius.circular(20)),
+          ),
           child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Image.asset('assets/shield.png', height: 80,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.security, size: 60)),
-              const SizedBox(height: 12),
-              const Text('Incident Report', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              _buildTextField('Incident Description', 'Enter a brief description', _descriptionController),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF28A361),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset('assets/shield.png', height: 80,
+                    errorBuilder: (_, __, ___) =>
+                    const Icon(Icons.security, size: 60)),
+                const SizedBox(height: 12),
+                const Text('Incident Report',
+                    style:
+                    TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                _buildTextField('Incident Description',
+                    'Enter a brief description', _descriptionController),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF28A361),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30)),
+                    ),
+                    onPressed: () => _submitIncidentReport(status),
+                    child: const Text('Submit Incident Report'),
                   ),
-                  onPressed: () => _submitIncidentReport(status),
-                  child: const Text('Submit Incident Report'),
                 ),
-              ),
-            ]),
+              ],
+            ),
           ),
         ),
       ),
@@ -208,10 +291,12 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     final responderName = responderData?['username'] ?? 'Unknown';
 
     final now = DateTime.now();
-    final formattedDate = '${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')}/${now.year}';
+    final formattedDate =
+        '${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')}/${now.year}';
     final formattedTime = TimeOfDay.fromDateTime(now).format(context);
 
-    final reportRef = FirebaseDatabase.instance.ref('responder_reports/$responderUid').push();
+    final reportRef =
+    FirebaseDatabase.instance.ref('responder_reports/$responderUid').push();
 
     await reportRef.set({
       'description': _descriptionController.text.trim(),
@@ -231,7 +316,8 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     );
   }
 
-  static Widget _buildTextField(String label, String hint, TextEditingController controller) {
+  static Widget _buildTextField(
+      String label, String hint, TextEditingController controller) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -243,14 +329,19 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
             hintText: hint,
             filled: true,
             fillColor: const Color(0xFFF2F2F2),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
         ),
       ],
     );
   }
 
+  // --- UI stays the same ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -263,95 +354,122 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Location of the user',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF25C09C), Color(0xFFFF0000)]),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              children: [
-                Row(
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Location of the user',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [Color(0xFF25C09C), Color(0xFFFF0000)]),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(
-                        'https://i.imgur.com/8Km9tLL.jpg',
-                        width: 50,
-                        height: 50,
-                        fit: BoxFit.cover,
+                    Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.network(
+                            'https://i.imgur.com/8Km9tLL.jpg',
+                            width: 50,
+                            height: 50,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _username ?? 'Loading...',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                _address ?? 'Fetching location...',
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        Image.asset(
+                          'assets/badge.png',
+                          height: 40,
+                          errorBuilder: (_, __, ___) =>
+                          const Icon(Icons.verified, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      height: 220,
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16)),
+                      child: GoogleMap(
+                        initialCameraPosition: const CameraPosition(
+                            target: LatLng(10.3157, 123.8854), zoom: 14),
+                        onMapCreated: (controller) =>
+                        _mapController = controller,
+                        markers: _markers,
+                        polylines: _polylines,
+                        myLocationEnabled: true,
+                        myLocationButtonEnabled: true,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Juan Dela Cruz',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          Text('Brgy. Opao, Umapad', style: TextStyle(color: Colors.white70)),
-                        ],
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text(
+                        'Use the guided route to quickly rescue the user.',
+                        style: TextStyle(fontSize: 13, color: Colors.black),
                       ),
                     ),
-                    Image.asset(
-                      'assets/badge.png',
-                      height: 40,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.verified, color: Colors.white),
-                    ),
+                    const SizedBox(height: 20),
+                    const Text('Is the Incident resolved?',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16)),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton(
+                          onPressed: () =>
+                              _showIncidentReportDialog(context, "resolved"),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF28A361)),
+                          child: const Text('Yes'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => _showIncidentReportDialog(
+                              context, "not resolved"),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red.shade400),
+                          child: const Text('No'),
+                        ),
+                      ],
+                    )
                   ],
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  height: 220,
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                  child: GoogleMap(
-                    initialCameraPosition: const CameraPosition(target: LatLng(10.3157, 123.8854), zoom: 14),
-                    onMapCreated: (controller) => _mapController = controller,
-                    markers: _markers,
-                    polylines: _polylines,
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: true,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.85),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text(
-                    'Use the guided route to quickly rescue the user.',
-                    style: TextStyle(fontSize: 13, color: Colors.black),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text('Is the Incident resolved?',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    ElevatedButton(
-                      onPressed: () => _showIncidentReportDialog(context, "resolved"),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF28A361)),
-                      child: const Text('Yes'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => _showIncidentReportDialog(context, "not resolved"),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade400),
-                      child: const Text('No'),
-                    ),
-                  ],
-                )
-              ],
-            ),
-          ),
-        ]),
+              ),
+            ]),
       ),
     );
   }

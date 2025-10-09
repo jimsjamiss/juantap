@@ -9,6 +9,14 @@ import 'package:intl/intl.dart';
 import 'package:juantap/pages/users/view_alert_location.dart';
 import 'package:vibration/vibration.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:juantap/pages/users/self_defense_guide.dart';
+import 'package:juantap/pages/users/sos_service.dart';
+import 'package:juantap/pages/users/voice_command_settings.dart';
+import 'dart:math';
+import 'package:location/location.dart' as loc;
+import 'package:google_maps_flutter/google_maps_flutter.dart'; // only if not already imported
+
+
 
 
 
@@ -23,6 +31,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   late AnimationController _rippleController;
   late Animation<double> _rippleAnimation;
 
+
   String _username = '';
   String? profileImageUrl;
   final _user = FirebaseAuth.instance.currentUser;
@@ -31,6 +40,21 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   AudioPlayer? _player;
   Timer? _vibrationTimer;
   bool _checkInActive = false;
+
+  DateTime? _lastDangerPopupTime; // ✅ track last popup time
+
+  final loc.Location _location = loc.Location(); // ✅ location tracker
+  bool _isPermissionGranted = false;            // ✅ permission flag
+  LatLng? _userPosition;                        // ✅ user position
+
+
+  // 🚨 Danger zone vars
+  final DatabaseReference _dangerRef = FirebaseDatabase.instance.ref("danger_zones");
+  Map<String, dynamic> _dangerZones = {};
+  StreamSubscription<Position>? _posSub;
+  final AudioPlayer _dangerPlayer = AudioPlayer();
+  bool _isDangerAlertVisible = false;
+
 
   @override
   void initState() {
@@ -48,7 +72,51 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _loadUserData();
     _listenToContactRequests();
     _listenToSosAlerts();
+    _listenToDangerZones();   // ✅ NEW
+    _startLocationMonitoring(); // ✅ NEW
+    _initializeLocation();        // ✅ new
+    _listenToLocationChanges();   // ✅ new
+
+
+
   }
+
+  void _listenToLocationChanges() {
+    _location.onLocationChanged.listen((newLoc) {
+      if (_isPermissionGranted &&
+          newLoc.latitude != null &&
+          newLoc.longitude != null) {
+        final newPos = LatLng(newLoc.latitude!, newLoc.longitude!);
+        setState(() {
+          _userPosition = newPos;
+        });
+        _checkIfInDangerZone(newPos.latitude, newPos.longitude);
+      }
+    });
+  }
+
+
+  Future<void> _initializeLocation() async {
+    bool serviceEnabled = await _location.serviceEnabled();
+    if (!serviceEnabled) {
+      serviceEnabled = await _location.requestService();
+      if (!serviceEnabled) return;
+    }
+
+    var permissionGranted = await _location.hasPermission();
+    if (permissionGranted == loc.PermissionStatus.denied) {
+      permissionGranted = await _location.requestPermission();
+      if (permissionGranted != loc.PermissionStatus.granted) return;
+    }
+
+    final currentLocation = await _location.getLocation();
+    setState(() {
+      _userPosition = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+      _isPermissionGranted = true;
+    });
+  }
+
+
   AudioPlayer? player;
 
   void _listenToSosAlerts() {
@@ -65,6 +133,21 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       final lng = (data['lng'] as num).toDouble();
       final alertSenderId = event.snapshot.key ?? 'unknown';
 
+      // ✅ 24-hour filter
+      final timestampStr = data['timestamp'];
+      DateTime alertTime;
+      if (timestampStr != null) {
+        alertTime = DateTime.tryParse(timestampStr) ?? DateTime.now();
+      } else {
+        alertTime = DateTime.now();
+      }
+
+      final now = DateTime.now();
+      if (now.difference(alertTime).inHours >= 24) {
+        debugPrint("⏰ Ignored old alert from $username (older than 24h)");
+        return; // skip old alert
+      }
+
       // Start custom vibration loop
       if (await Vibration.hasVibrator() ?? false) {
         _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
@@ -75,7 +158,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       // Play emergency ringtone
       player = AudioPlayer();
       try {
-        await player!.setSource(AssetSource('audio/lingling.mp3'));
+        await player!.setSource(AssetSource('audio/bomboclat.mp3'));
         await player!.setReleaseMode(ReleaseMode.loop);
         await player!.resume();
       } catch (e) {
@@ -120,6 +203,124 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       );
     });
   }
+
+  // ✅ Load danger zones
+  void _listenToDangerZones() {
+    _dangerRef.onValue.listen((event) {
+      if (event.snapshot.exists) {
+        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+        setState(() => _dangerZones = data);
+      }
+    });
+  }
+
+// ✅ Start monitoring user location
+  void _startLocationMonitoring() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+
+    LocationPermission perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+      perm = await Geolocator.requestPermission();
+      if (perm != LocationPermission.always && perm != LocationPermission.whileInUse) return;
+    }
+
+    _posSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10),
+    ).listen((pos) {
+      _checkIfInDangerZone(pos.latitude, pos.longitude);
+    });
+  }
+
+// ✅ Check if inside danger zone
+  void _checkIfInDangerZone(double lat, double lng) {
+    for (var zoneEntry in _dangerZones.entries) {
+      final zone = Map<String, dynamic>.from(zoneEntry.value);
+      final double zLat = (zone["lat"] as num).toDouble();
+      final double zLng = (zone["lng"] as num).toDouble();
+      final double zRadius = (zone["radius"] as num).toDouble();
+
+      final dist = _calculateDistance(lat, lng, zLat, zLng);
+      if (dist <= zRadius) {
+        // ✅ throttle to once every 1 minute
+        final now = DateTime.now();
+        if (_lastDangerPopupTime == null ||
+            now.difference(_lastDangerPopupTime!).inSeconds >= 30) {
+          _lastDangerPopupTime = now;
+
+          String msg = "You are inside a danger zone!";
+          if (zone["reports"] is Map && (zone["reports"] as Map).isNotEmpty) {
+            final reports = Map<String, dynamic>.from(zone["reports"]);
+            final last = reports.entries.last.value;
+            msg = last["message"] ?? msg;
+          }
+          _triggerDangerAlert(zone["name"] ?? "Danger Zone", msg);
+        }
+        break;
+      }
+    }
+  }
+
+
+// ✅ Haversine distance
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const R = 6371000;
+    final dLat = (lat2 - lat1) * pi / 180;
+    final dLon = (lon2 - lon1) * pi / 180;
+    final a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat1 * pi / 180) * cos(lat2 * pi / 180) *
+            sin(dLon / 2) * sin(dLon / 2);
+    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return R * c;
+  }
+
+// ✅ Popup alert for danger zone
+  void _triggerDangerAlert(String zoneName, String message) async {
+    if (_isDangerAlertVisible) return;
+    _isDangerAlertVisible = true;
+
+    if (await Vibration.hasVibrator() ?? false) {
+      _vibrationTimer?.cancel();
+      _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        Vibration.vibrate(duration: 1000);
+      });
+    }
+
+    try {
+      await _dangerPlayer.setSource(AssetSource("sounds/lingling.mp3"));
+      await _dangerPlayer.setReleaseMode(ReleaseMode.loop);
+      await _dangerPlayer.resume();
+    } catch (e) {
+      debugPrint("Audio error: $e");
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: Text("⚠️ $zoneName"),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _dangerPlayer.stop();
+              _vibrationTimer?.cancel();
+              Vibration.cancel();
+              _isDangerAlertVisible = false;
+              Navigator.pop(context);
+
+              // ✅ force navigate to maps after closing popup
+              Navigator.pushNamed(context, '/maps_location');
+            },
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
+  }
+
+
 
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -281,71 +482,103 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   void _listenToContactRequests() {
     final uid = FirebaseAuth.instance.currentUser!.uid;
+    final ref = FirebaseDatabase.instance.ref('contact_requests/$uid');
 
-    FirebaseDatabase.instance
-        .ref('contact_requests/$uid')
-        .onValue
-        .listen((event) {
-      if (event.snapshot.exists) {
-        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-        final List<Map<String, dynamic>> newNotifs = [];
+    ref.onValue.listen((event) {
+      if (!event.snapshot.exists) {
+        setState(() => _notifications = []);
+        return;
+      }
 
-        data.forEach((key, value) {
-          final req = Map<String, dynamic>.from(value);
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      final List<Map<String, dynamic>> newNotifs = [];
+
+      data.forEach((key, value) {
+        final req = Map<String, dynamic>.from(value);
+        final senderUsername = req['senderUsername'] ?? 'Unknown User';
+        final status = req['status'] ?? 'pending';
+
+        if (status == 'pending') {
           newNotifs.add({
             'uid': key,
-            'username': req['senderUsername'],
+            'username': senderUsername,
+            'timestamp': req['timestamp'] ?? 0,
           });
-        });
+        }
+      });
 
-        setState(() {
-          _notifications = newNotifs;
-        });
-      } else {
-        setState(() {
-          _notifications = [];
-        });
-      }
+      // Sort newest first
+      newNotifs.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+      setState(() {
+        _notifications = newNotifs;
+      });
     });
   }
+
   void _showNotificationMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
+      shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => ListView.builder(
-        itemCount: _notifications.length,
-        itemBuilder: (context, index) {
-          final notif = _notifications[index];
-          return ListTile(
-            title: Text('${notif['username']}'),
-            subtitle: Text('wants to add you'),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(Icons.check, color: Colors.green),
-                  onPressed: () async {
-                    await _acceptRequest(notif['uid'], notif['username']);
-                    Navigator.pop(context);
-                  },
-                ),
-                IconButton(
-                  icon: Icon(Icons.close, color: Colors.red),
-                  onPressed: () async {
-                    await _declineRequest(notif['uid']);
-                    Navigator.pop(context);
-                  },
-                ),
-              ],
+      builder: (_) {
+        if (_notifications.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24.0),
+              child: Text(
+                'No pending requests',
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
             ),
           );
-        },
-      ),
+        }
+
+        return ListView.builder(
+          itemCount: _notifications.length,
+          itemBuilder: (context, index) {
+            final notif = _notifications[index];
+            final username = notif['username'] ?? 'Unknown User';
+
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              color: const Color(0xFFEFFEF5),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.teal,
+                  child: Icon(Icons.person, color: Colors.white),
+                ),
+                title: Text(username, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: const Text('wants to add you as a contact'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.check_circle, color: Colors.green),
+                      onPressed: () async {
+                        await _acceptRequest(notif['uid'], username);
+                        Navigator.pop(context);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.cancel, color: Colors.red),
+                      onPressed: () async {
+                        await _declineRequest(notif['uid']);
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
+
   final DatabaseReference _contactsRef = FirebaseDatabase.instance.ref('contacts');
   final DatabaseReference _requestsRef = FirebaseDatabase.instance.ref('contact_requests');
 
@@ -457,65 +690,18 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       ],
     );
   }
+
   Future<void> sendSosAlert() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      final uid = user.uid;
-      final userRef = FirebaseDatabase.instance.ref('users/$uid');
-      final contactsRef = FirebaseDatabase.instance.ref('contacts/$uid');
-      final sosRef = FirebaseDatabase.instance.ref('sos_alerts');
-      final responderAlertRef = FirebaseDatabase.instance.ref('responder_alerts');
-
-      final userSnapshot = await userRef.get();
-      if (!userSnapshot.exists) return;
-
-      final userData = Map<String, dynamic>.from(userSnapshot.value as Map);
-      final username = userData['username'] ?? 'Unknown';
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return;
-
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-
-      final contactsSnapshot = await contactsRef.get();
-      if (contactsSnapshot.exists) {
-        final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
-        for (final contactId in contacts.keys) {
-          await sosRef.child(contactId).child(uid).child('location').set({
-            'username': username,
-            'timestamp': DateTime.now().toIso8601String(),
-            'lat': position.latitude,
-            'lng': position.longitude,
-          });
-        }
-      }
-
-      // Send to responders
-      final newResponderRef = FirebaseDatabase.instance.ref('responder_alerts').push();
-      await newResponderRef.set({
-        'location': {
-          'lat': position.latitude,
-          'lng': position.longitude,
-          'timestamp': DateTime.now().toIso8601String(),
-          'userId': uid,
-          'username': username,
-        }
-      });
-
-
+    await SOSService.sendSosAlert();
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('🚨 SOS sent successfully'), backgroundColor: Colors.redAccent),
+        const SnackBar(
+          content: Text('🚨 SOS sent successfully'),
+          backgroundColor: Colors.redAccent,
+        ),
       );
-    } catch (e) {
-      print('❌ Error sending SOS: $e');
     }
   }
-
 
   void _confirmAndSendSOS() {
     int secondsLeft = 5;
@@ -572,6 +758,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   void dispose() {
     _rippleController.dispose();
     _vibrationTimer?.cancel();
+    _posSub?.cancel();      // ✅ stop location listener
+    _dangerPlayer.dispose(); // ✅ dispose audio player
     super.dispose();
   }
 
@@ -691,6 +879,32 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               onTap: () => Navigator.pushNamed(context, '/edit_profile'),
             ),
             const Divider(color: Colors.white54),
+
+            ListTile(
+              leading: const Icon(Icons.shield, color: Colors.white),
+              title: const Text('Self-Defense Guides', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context); // close the drawer
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SelfDefenseGuidePage()),
+                );
+              },
+            ),
+
+            ListTile(
+              leading: const Icon(Icons.mic, color: Colors.white),
+              title: const Text('Voice Command Settings', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context); // close the drawer
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const VoiceCommandSettings()),
+                );
+              },
+            ),
+
+
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.white),
               title: const Text('Logout', style: TextStyle(color: Colors.white)),

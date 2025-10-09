@@ -5,6 +5,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:juantap/pages/responders/responder.dart';
 import '../admin/admin.dart';
 import 'package:juantap/pages/users/signup.dart';
+import 'package:juantap/pages/users/signup.dart';
 
 class Login extends StatelessWidget {
   const Login({super.key});
@@ -108,7 +109,7 @@ class _LoginPageState extends State<LoginPage> {
           Navigator.of(context).pop(); // close dialog
 
           if (role == 'admin') {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const admin()));
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminDashboardPage()));
           } else if (role == 'responder') {
             Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ResponderDashboard()));
           } else {

@@ -1,23 +1,57 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:flutter/material.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'firebase_options.dart';
+
+// ✅ Import your pages
 import 'package:juantap/pages/admin/admin.dart';
 import 'package:juantap/pages/responders/responder.dart';
-import 'package:juantap/pages/users/call_page.dart';
+import 'package:juantap/pages/users/home.dart';
+import 'package:juantap/pages/users/login.dart';
+import 'package:juantap/pages/users/splash_screen.dart';
+import 'package:juantap/pages/users/signup.dart';
+import 'package:juantap/pages/users/edit_profile.dart';
+import 'package:juantap/pages/users/maps_location.dart';
 import 'package:juantap/pages/users/check_in.dart';
 import 'package:juantap/pages/users/contact_lists.dart';
 import 'package:juantap/pages/users/contact_lists_requests.dart';
-import 'package:juantap/pages/users/edit_profile.dart';
-import 'package:juantap/pages/users/home.dart';
-import 'package:juantap/pages/users/login.dart';
-import 'package:juantap/pages/users/maps_location.dart';
-import 'package:juantap/pages/users/signup.dart';
-import 'package:juantap/pages/users/splash_screen.dart';
+import 'package:juantap/pages/responders/edit_responder_profile.dart';
 
-void main() async {
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+
+  try {
+    if (kIsWeb) {
+      debugPrint("🌐 Running on Web — initializing Firebase Web manually...");
+
+      await Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: "AIzaSyB4lyiOI8bUh9QbjTAUD6B2fl62U9eu8ZU",
+          authDomain: "juantap-db-2dbeb.firebaseapp.com",
+          databaseURL: "https://juantap-db-2dbeb-default-rtdb.firebaseio.com",
+          projectId: "juantap-db-2dbeb",
+          storageBucket: "juantap-db-2dbeb.appspot.com",
+          messagingSenderId: "201901470099",
+          appId: "1:201901470099:web:bd254aa6d087968438b866",
+          measurementId: "G-M02NM47ELK",
+        ),
+      );
+      debugPrint("✅ Firebase Web initialized successfully");
+    } else {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      debugPrint("📱 Firebase initialized for Mobile/Desktop");
+    }
+  } catch (e, stack) {
+    debugPrint("🔥 Firebase init error: $e");
+    debugPrintStack(stackTrace: stack);
+  }
+
   runApp(const JuanTap());
 }
 
@@ -27,21 +61,22 @@ class JuanTap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
       title: 'JuanTap',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const AuthGate(),
+      home: kIsWeb ? const AdminDashboardPage() : const AuthGate(),
       routes: {
-        '/home': (context) => HomePage(),
-        '/login': (context) => LoginPage(),
-        '/registration': (context) => Registration(),
-        '/edit_profile': (context) => EditProfilePage(),
-        '/maps_location': (context) => MapsLocation(),
+        '/home': (context) => const HomePage(),
+        '/login': (context) => const LoginPage(),
+        '/registration': (context) => const Registration(),
+        '/edit_profile': (context) => const EditProfilePage(),
+        '/maps_location': (context) => const MapsLocation(),
         '/check_in': (context) => CheckInPage(),
-        '/contact_lists': (context) => ContactListPage(),
-        '/contact_lists_requests': (context) => ContactListsRequestsPage(),
-        '/adminDashboard': (context) => const admin(),
+        '/contact_lists': (context) =>  ContactListPage(),
+        '/contact_lists_requests': (context) =>  ContactListsRequestsPage(),
         '/responderDashboard': (context) => const ResponderDashboard(),
+        '/admin': (context) => const AdminDashboardPage(),
+        '/edit_responder_profile': (context) => const EditResponderProfilePage(),
       },
     );
   }
@@ -51,15 +86,21 @@ class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
   Future<Widget> _determineHomeScreen(User user) async {
-    final roleSnapshot = await FirebaseDatabase.instance.ref('users/${user.uid}/role').get();
-    final role = roleSnapshot.value;
+    try {
+      final roleSnapshot =
+      await FirebaseDatabase.instance.ref('users/${user.uid}/role').get();
+      final role = roleSnapshot.value;
 
-    if (role == 'admin') {
-      return const admin();
-    } else if (role == 'responder') {
-      return const ResponderDashboard();
-    } else {
-      return const HomePage();
+      if (role == 'admin') {
+        return const AdminDashboardPage();
+      } else if (role == 'responder') {
+        return const ResponderDashboard();
+      } else {
+        return const HomePage();
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error fetching user role: $e");
+      return const LoginPage();
     }
   }
 
@@ -69,23 +110,20 @@ class AuthGate extends StatelessWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SplashScreen(); // While loading
+          return const SplashScreen();
         } else if (snapshot.hasData) {
-          // If user is logged in, determine role
           return FutureBuilder<Widget>(
             future: _determineHomeScreen(snapshot.data!),
-            builder: (context, futureSnapshot) {
-              if (futureSnapshot.connectionState == ConnectionState.waiting) {
-                return const SplashScreen(); // Waiting for role fetch
-              } else if (futureSnapshot.hasData) {
-                return futureSnapshot.data!;
+            builder: (context, roleSnapshot) {
+              if (roleSnapshot.connectionState == ConnectionState.waiting) {
+                return const SplashScreen();
               } else {
-                return const LoginPage(); // Fallback on error
+                return roleSnapshot.data ?? const LoginPage();
               }
             },
           );
         } else {
-          return const LoginPage(); // Not logged in
+          return const LoginPage();
         }
       },
     );

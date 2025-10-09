@@ -7,9 +7,12 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:http/http.dart' as http;
 import 'send_alert_response.dart';
 import 'incident_reports.dart';
 import 'package:juantap/pages/users/login.dart';
+import 'package:juantap/pages/responders/edit_responder_profile.dart';
+
 
 class ResponderDashboard extends StatelessWidget {
   const ResponderDashboard({super.key});
@@ -17,7 +20,7 @@ class ResponderDashboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Emergency Notifications',
+      title: 'Responder Dashboard',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
         useMaterial3: true,
@@ -36,12 +39,16 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  File? _profileImage;
-  final _nameController = TextEditingController();
   final user = FirebaseAuth.instance.currentUser;
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
+
+  File? _profileImage;
+  String? _profileImageUrl;
   String _username = '';
-  bool _isMounted = true;
   List<Map<String, String>> recentAlerts = [];
+  bool _isMounted = true;
 
   AudioPlayer? player;
   Timer? _vibrationTimer;
@@ -49,7 +56,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _fetchUsername();
+    _fetchResponderData();
     _listenToResponderAlerts();
   }
 
@@ -61,15 +68,143 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
+  // ✅ Fetch responder info from Firebase
+  Future<void> _fetchResponderData() async {
+    if (user == null) return;
+    final ref = FirebaseDatabase.instance.ref('users/${user!.uid}');
+    final snapshot = await ref.get();
+
+    if (snapshot.exists) {
+      final data = Map<String, dynamic>.from(snapshot.value as Map);
+      setState(() {
+        _username = data['username'] ?? '';
+        _emailController.text = data['email'] ?? '';
+        _phoneController.text = data['phone'] ?? '';
+        _profileImageUrl = data['profileImage'];
+      });
+    }
+  }
+
+  // ✅ Upload image to Cloudinary and save URL in Firebase
+  Future<void> _uploadProfileImage(File imageFile) async {
+    const cloudName = 'YOUR_CLOUD_NAME'; // 🔁 replace with your Cloudinary name
+    const uploadPreset = 'YOUR_UPLOAD_PRESET'; // 🔁 replace with your upload preset
+
+    final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+    final request = http.MultipartRequest('POST', url)
+      ..fields['upload_preset'] = uploadPreset
+      ..files.add(await http.MultipartFile.fromPath('file', imageFile.path));
+
+    final response = await request.send();
+    final responseData = await response.stream.bytesToString();
+
+    if (response.statusCode == 200) {
+      final uploadedUrl = RegExp(r'"secure_url":"([^"]+)"').firstMatch(responseData)?.group(1);
+      if (uploadedUrl != null && user != null) {
+        await FirebaseDatabase.instance
+            .ref('users/${user!.uid}/profileImage')
+            .set(uploadedUrl);
+        setState(() => _profileImageUrl = uploadedUrl);
+      }
+    }
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picked != null) {
+      final file = File(picked.path);
+      setState(() => _profileImage = file);
+      await _uploadProfileImage(file);
+    }
+  }
+
+  // ✅ Save profile changes to Firebase
+  Future<void> _saveProfile() async {
+    if (user == null) return;
+
+    final newName = _nameController.text.trim();
+    final newPhone = _phoneController.text.trim();
+    final newEmail = _emailController.text.trim();
+
+    await FirebaseDatabase.instance.ref('users/${user!.uid}').update({
+      'username': newName,
+      'phone': newPhone,
+      'email': newEmail,
+      'role': 'responder',
+      'profileImage': _profileImageUrl,
+    });
+
+    setState(() {
+      _username = newName;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Profile updated successfully ✅')),
+    );
+  }
+
+  // ✅ Show profile edit dialog
+  void _showEditProfileDialog() {
+    _nameController.text = _username;
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Profile'),
+          content: SingleChildScrollView(
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: _pickAndUploadImage,
+                  child: CircleAvatar(
+                    radius: 40,
+                    backgroundImage: _profileImageUrl != null
+                        ? NetworkImage(_profileImageUrl!)
+                        : const AssetImage('assets/shield.png') as ImageProvider,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                TextField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
+                TextField(
+                  controller: _phoneController,
+                  decoration: const InputDecoration(labelText: 'Phone'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await _saveProfile();
+                Navigator.pop(context);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ✅ Listen to SOS alerts from users
   void _listenToResponderAlerts() {
     final responderAlertsRef = FirebaseDatabase.instance.ref('responder_alerts');
-
     responderAlertsRef.onChildAdded.listen((event) async {
       final locationSnapshot = event.snapshot.child('location');
       if (locationSnapshot.value == null || !_isMounted) return;
 
       final locationData = Map<String, dynamic>.from(locationSnapshot.value as Map);
-
       final timestampString = locationData['timestamp'];
       if (timestampString == null) return;
 
@@ -93,70 +228,43 @@ class _MyHomePageState extends State<MyHomePage> {
         'image': 'https://via.placeholder.com/60',
       };
 
-      // 🚨 Show dialog FIRST for responsiveness
       if (!context.mounted) return;
-      Future.microtask(() {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (BuildContext dialogContext) {
-            return Dialog(
-              backgroundColor: const Color(0xFFFFEAEA),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('🚨 SOS Alert', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 10),
-                    Text('from $username', style: const TextStyle(fontSize: 18)),
-                    const SizedBox(height: 10),
-                    Text('Location: $lat, $lng'),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey),
-                          onPressed: () {
-                            _vibrationTimer?.cancel();
-                            Vibration.cancel();
-                            player?.stop();
-                            Navigator.of(dialogContext).pop(); // ✅ Correct context!
-                          },
-                          child: const Text('Dismiss', style: TextStyle(color: Colors.white)),
-                        ),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                          onPressed: () {
-                            _vibrationTimer?.cancel();
-                            Vibration.cancel();
-                            player?.stop();
-                            Navigator.of(dialogContext).pop(); // ✅ Correct context!
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => SendAlertResponsePage(data: alert)),
-                            );
-                          },
-                          child: const Text('Accept', style: TextStyle(color: Colors.white)),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      });
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFFFFEAEA),
+          title: Text('🚨 SOS Alert from $username'),
+          content: Text('Location: $lat, $lng'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _vibrationTimer?.cancel();
+                Vibration.cancel();
+                player?.stop();
+                Navigator.pop(context);
+              },
+              child: const Text('Dismiss'),
+            ),
+            TextButton(
+              onPressed: () {
+                _vibrationTimer?.cancel();
+                Vibration.cancel();
+                player?.stop();
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => SendAlertResponsePage(data: alert)),
+                );
+              },
+              child: const Text('Accept'),
+            ),
+          ],
+        ),
+      );
 
-      // ✅ Then update alert list
-      if (_isMounted) {
-        setState(() => recentAlerts.add(alert));
-      }
+      if (_isMounted) setState(() => recentAlerts.add(alert));
 
-      // ✅ Then play vibration and sound
       if (await Vibration.hasVibrator() ?? false) {
         _vibrationTimer?.cancel();
         _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
@@ -166,34 +274,13 @@ class _MyHomePageState extends State<MyHomePage> {
 
       player = AudioPlayer();
       try {
-        await player!.setSource(AssetSource('audio/lingling.mp3'));
+        await player!.setSource(AssetSource('audio/bomboclat.mp3'));
         await player!.setReleaseMode(ReleaseMode.loop);
         await player!.resume();
       } catch (e) {
         print('Audio error: $e');
       }
     });
-  }
-
-
-
-  Future<void> _pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      setState(() => _profileImage = File(picked.path));
-    }
-  }
-
-  Future<void> _updateName() async {
-    if (user != null) {
-      final newName = _nameController.text.trim();
-      if (newName.isNotEmpty) {
-        await FirebaseDatabase.instance.ref("users/${user!.uid}/username").set(newName);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name updated successfully')));
-        setState(() => _username = newName);
-        Navigator.pop(context);
-      }
-    }
   }
 
   void _logout() async {
@@ -203,76 +290,47 @@ class _MyHomePageState extends State<MyHomePage> {
         title: const Text('Confirm Logout'),
         content: const Text('Are you sure you want to log out?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Logout')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Logout')),
         ],
       ),
     );
 
     if (shouldLogout == true) {
       await FirebaseAuth.instance.signOut();
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginPage()));
-    }
-  }
-
-  void _showEditNameDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        _nameController.text = _username;
-        return AlertDialog(
-          title: const Text('Edit Name'),
-          content: TextField(
-            controller: _nameController,
-            decoration: const InputDecoration(hintText: 'Enter new name'),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            ElevatedButton(onPressed: _updateName, child: const Text('Save')),
-          ],
-        );
-      },
-    );
-  }
-
-  void _fetchUsername() async {
-    if (user != null) {
-      final snapshot = await FirebaseDatabase.instance.ref("users/${user!.uid}/username").get();
-      if (snapshot.exists) {
-        setState(() => _username = snapshot.value.toString());
+      if (context.mounted) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final List<Map<String, String>> notifications = recentAlerts;
+    final notifications = recentAlerts;
 
     return Scaffold(
       backgroundColor: const Color(0xFF2A9D8F),
       appBar: AppBar(
         title: Text(widget.title, style: const TextStyle(color: Colors.white)),
         backgroundColor: const Color(0xFF2A9D8F),
-        elevation: 0,
       ),
       drawer: Drawer(
         backgroundColor: const Color(0xFF264653),
         child: ListView(
-          padding: EdgeInsets.zero,
           children: [
             UserAccountsDrawerHeader(
               decoration: const BoxDecoration(color: Color(0xFF2A9D8F)),
               accountName: GestureDetector(
-                onTap: _showEditNameDialog,
+                onTap: _showEditProfileDialog,
                 child: Text(_username, style: const TextStyle(fontSize: 18)),
               ),
-              accountEmail: const Text("responder@juantap.com"),
+              accountEmail: Text(_emailController.text.isEmpty ? "responder@juantap.com" : _emailController.text),
               currentAccountPicture: GestureDetector(
-                onTap: _pickImage,
+                onTap: _pickAndUploadImage,
                 child: CircleAvatar(
                   backgroundColor: Colors.white,
-                  backgroundImage: _profileImage != null
-                      ? FileImage(_profileImage!)
+                  backgroundImage: _profileImageUrl != null
+                      ? NetworkImage(_profileImageUrl!)
                       : const AssetImage('assets/shield.png') as ImageProvider,
                 ),
               ),
@@ -285,10 +343,16 @@ class _MyHomePageState extends State<MyHomePage> {
             ListTile(
               leading: const Icon(Icons.report, color: Colors.white),
               title: const Text('Incident Reports', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IncidentReportsPage())),
+            ),
+            ListTile(
+              leading: const Icon(Icons.account_circle, color: Colors.white),
+              title: const Text('Edit Profile', style: TextStyle(color: Colors.white)),
               onTap: () {
+                Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const IncidentReportsPage()),
+                  MaterialPageRoute(builder: (_) => const EditResponderProfilePage()),
                 );
               },
             ),
@@ -301,104 +365,59 @@ class _MyHomePageState extends State<MyHomePage> {
           ],
         ),
       ),
-      body: Stack(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 12),
-                const Text(
-                  'Emergency Notifications',
-                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                if (notifications.isNotEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8.0, bottom: 4.0),
-                    child: Text('Recent Alerts:', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
-                  ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: notifications.length,
-                    itemBuilder: (context, index) {
-                      final item = notifications[index];
-                      final latLngParts = item['location']!.split(',');
-                      final lat = double.tryParse(latLngParts[0].trim()) ?? 0;
-                      final lng = double.tryParse(latLngParts[1].trim()) ?? 0;
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Emergency Notifications',
+                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Expanded(
+              child: ListView.builder(
+                itemCount: notifications.length,
+                itemBuilder: (context, index) {
+                  final item = notifications[index];
+                  final latLng = item['location']!.split(',');
+                  final lat = double.tryParse(latLng[0].trim()) ?? 0;
+                  final lng = double.tryParse(latLng[1].trim()) ?? 0;
 
-                      return GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => SendAlertResponsePage(data: item)),
-                        ),
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 6),
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFEAEA),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    backgroundImage: NetworkImage(item['image']!),
-                                    radius: 25,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(item['name']!, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black, fontSize: 14)),
-                                        Text(item['location']!, style: const TextStyle(color: Colors.black54, fontSize: 12)),
-                                      ],
-                                    ),
-                                  )
-                                ],
+                  return Container(
+                    margin: const EdgeInsets.symmetric(vertical: 6),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFEAEA),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item['name']!,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        Text(item['location']!, style: const TextStyle(fontSize: 12)),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          height: 160,
+                          child: GoogleMap(
+                            initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 14),
+                            markers: {
+                              Marker(
+                                markerId: MarkerId(item['name']!),
+                                position: LatLng(lat, lng),
                               ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                height: 160,
-                                child: GoogleMap(
-                                  initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 14),
-                                  markers: {
-                                    Marker(
-                                      markerId: MarkerId(item['name']!),
-                                      position: LatLng(lat, lng),
-                                    ),
-                                  },
-                                  zoomControlsEnabled: false,
-                                  liteModeEnabled: true,
-                                ),
-                              ),
-                            ],
+                            },
+                            zoomControlsEnabled: false,
+                            liteModeEnabled: true,
                           ),
                         ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+                      ],
+                    ),
+                  );
+                },
+              ),
             ),
-          ),
-          Positioned(
-            top: 12,
-            right: 16,
-            child: FloatingActionButton(
-              mini: true,
-              backgroundColor: Colors.white,
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const IncidentReportsPage()));
-              },
-              child: const Icon(Icons.description_outlined, color: Colors.black),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
