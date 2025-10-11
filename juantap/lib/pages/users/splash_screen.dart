@@ -46,6 +46,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
     // Delay before navigation
     Future.delayed(const Duration(seconds: 3), () {
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(

@@ -9,11 +9,15 @@ class WebLiveMap extends StatefulWidget {
     super.key,
     this.centerLat,
     this.centerLng,
+    this.markerTitle,
   });
 
-  /// Optional initial camera center
+  /// Optional initial camera center (responder report pinpoint)
   final double? centerLat;
   final double? centerLng;
+
+  /// Optional title for the pinpoint marker
+  final String? markerTitle;
 
   @override
   State<WebLiveMap> createState() => _WebLiveMapState();
@@ -27,14 +31,16 @@ class _WebLiveMapState extends State<WebLiveMap> {
 
   final MapController _mapController = MapController();
 
-  // Keep each group separate, then combine for the layer:
+  // Markers & circles
   List<Marker> _dangerMarkers = <Marker>[];
   List<Marker> _userMarkers = <Marker>[];
+  List<Marker> _reportMarker = <Marker>[];
   List<CircleMarker> _circles = <CircleMarker>[];
 
   List<Marker> get _allMarkers => <Marker>[
     ..._dangerMarkers,
     ..._userMarkers,
+    ..._reportMarker,
   ];
 
   @override
@@ -42,6 +48,7 @@ class _WebLiveMapState extends State<WebLiveMap> {
     super.initState();
     _listenToDangerZones();
     _listenToLiveUsers();
+    _addReportPinIfAvailable();
   }
 
   void _listenToDangerZones() {
@@ -95,7 +102,6 @@ class _WebLiveMapState extends State<WebLiveMap> {
       setState(() {
         _dangerMarkers = dz;
         _circles = cs;
-        // _userMarkers kept as-is; layer below merges them
       });
     });
   }
@@ -136,6 +142,64 @@ class _WebLiveMapState extends State<WebLiveMap> {
     });
   }
 
+  // ✅ Add pinpoint marker for responder report if coordinates are available
+  void _addReportPinIfAvailable() {
+    if (widget.centerLat != null && widget.centerLng != null) {
+      final double lat = widget.centerLat!;
+      final double lng = widget.centerLng!;
+
+      setState(() {
+        _reportMarker = [
+          Marker(
+            width: 45,
+            height: 45,
+            point: LatLng(lat, lng),
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.markerTitle != null && widget.markerTitle!.isNotEmpty)
+                  Container(
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          blurRadius: 3,
+                          offset: const Offset(1, 2),
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      widget.markerTitle!,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                const Icon(
+                  Icons.location_on,
+                  color: Colors.green,
+                  size: 42,
+                ),
+              ],
+            ),
+          ),
+        ];
+      });
+
+      // Center the map automatically to that pinpoint
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _mapController.move(LatLng(lat, lng), 15);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
@@ -152,10 +216,9 @@ class _WebLiveMapState extends State<WebLiveMap> {
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            // flutter_map >= 5 recommends setting this:
             userAgentPackageName: 'com.yourcompany.juantap_admin',
           ),
-          CircleLayer(circles: _circles),
+          if (_circles.isNotEmpty) CircleLayer(circles: _circles),
           MarkerLayer(markers: _allMarkers),
         ],
       ),

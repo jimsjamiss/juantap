@@ -65,20 +65,54 @@ class _GeofencingPageState extends State<GeofencingPage>
     });
   }
 
-  // 💾 Save new zone
+  // 💾 Save new zone (fixed)
   Future<void> _saveZone(LatLng center, String label, double radius) async {
     final id = _zonesRef.push().key!;
+
     await _zonesRef.child(id).set({
       'name': label.isEmpty ? 'Danger Zone' : label,
       'lat': center.latitude,
       'lng': center.longitude,
       'radius': radius,
-      'reports': {'reports_count': 0},
+      'created_at': DateTime.now().toIso8601String(),
+      'report_count': 0, // ✅ new counter field
+      'reports': {}, // ✅ proper structure
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('✅ Danger zone added successfully')),
     );
+  }
+
+  // 🧹 Fix existing invalid zones
+  Future<void> _cleanOldZones() async {
+    final snapshot = await _zonesRef.get();
+
+    if (snapshot.exists) {
+      final zones = Map<String, dynamic>.from(snapshot.value as Map);
+
+      int fixedCount = 0;
+      for (var entry in zones.entries) {
+        final id = entry.key;
+        final zone = Map<String, dynamic>.from(entry.value);
+
+        if (zone["reports"] is Map &&
+            (zone["reports"] as Map).containsKey("reports_count")) {
+          await _zonesRef.child(id).update({
+            "reports": {}, // ✅ clean structure
+            "report_count": 0, // ✅ separate count field
+          });
+          fixedCount++;
+        }
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("🧹 Fixed $fixedCount old zone(s) successfully!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
   }
 
   // 🗑️ Delete zone
@@ -149,13 +183,11 @@ class _GeofencingPageState extends State<GeofencingPage>
                     },
                     icon: const Icon(Icons.delete_forever_rounded,
                         color: Colors.white, size: 18),
-                    label: const Text(
-                      "Delete",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14),
-                    ),
+                    label: const Text("Delete",
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.redAccent,
                       shape: RoundedRectangleBorder(
@@ -163,7 +195,6 @@ class _GeofencingPageState extends State<GeofencingPage>
                       padding: const EdgeInsets.symmetric(
                           horizontal: 24, vertical: 10),
                       elevation: 6,
-                      shadowColor: Colors.redAccent.withOpacity(0.4),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -210,13 +241,6 @@ class _GeofencingPageState extends State<GeofencingPage>
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.greenAccent,
-                blurRadius: 10,
-                offset: Offset(1, -2),
-              ),
-            ],
           ),
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(ctx).viewInsets.bottom,
@@ -288,16 +312,14 @@ class _GeofencingPageState extends State<GeofencingPage>
                       ),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 40, vertical: 14),
-                      shadowColor: const Color(0xFF1E88E5).withOpacity(0.4),
                     ),
                     icon: const Icon(Icons.save, color: Colors.white),
                     label: const Text(
                       "Save Zone",
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600),
                     ),
                     onPressed: () {
                       Navigator.pop(ctx);
@@ -319,7 +341,7 @@ class _GeofencingPageState extends State<GeofencingPage>
   // 🗺️ Tap to add
   void _onTap(LatLng latLng) => _openAddZoneDialog(latLng);
 
-  // 🎯 Focus zone
+  // 🎯 Focus zone animation
   void _focusOnZone(Map<String, dynamic> zone) {
     final LatLng target = LatLng(zone['lat'], zone['lng']);
     final double radius = zone['radius'];
@@ -380,11 +402,7 @@ class _GeofencingPageState extends State<GeofencingPage>
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            Color(0xFFC8F4E4),
-            Color(0xFFA7E2C9),
-            Color(0xFF7FD1AE),
-          ],
+          colors: [Color(0xFFC8F4E4), Color(0xFFA7E2C9), Color(0xFF7FD1AE)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -393,6 +411,7 @@ class _GeofencingPageState extends State<GeofencingPage>
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
+            // 🗺️ Map Section
             Expanded(
               flex: 3,
               child: Card(
@@ -422,6 +441,8 @@ class _GeofencingPageState extends State<GeofencingPage>
               ),
             ),
             const SizedBox(width: 16),
+
+            // 📋 Right Panel
             Expanded(flex: 2, child: _buildRightPanel()),
           ],
         ),
@@ -457,54 +478,21 @@ class _GeofencingPageState extends State<GeofencingPage>
           ),
           const Divider(height: 24),
 
-          // ℹ️ Instruction box
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF9FFF9),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.teal.withOpacity(0.15),
-                  blurRadius: 10,
-                  offset: const Offset(2, 3),
-                ),
-              ],
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded,
-                        color: Colors.deepOrange, size: 30),
-                    SizedBox(width: 10),
-                    Text(
-                      "How to Use Geofencing Map",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF084C41),
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 12),
-                Text(
-                  "🗺️ Tap anywhere on the map to add a new Danger Zone.\n"
-                      "💡 Tap an existing zone below to focus and highlight it on the map.\n"
-                      " Use the delete icon to remove a zone from the list.",
-                  style: TextStyle(
-                    fontSize: 15,
-                    height: 1.6,
-                    color: Colors.black87,
-                  ),
-                ),
-              ],
+          // 🧹 Fix Old Zones Button
+          ElevatedButton.icon(
+            onPressed: _cleanOldZones,
+            icon: const Icon(Icons.cleaning_services_rounded),
+            label: const Text("Fix Old Zones"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           ),
 
-          const Divider(height: 24),
+          const SizedBox(height: 16),
           Row(
             children: [
               const Icon(Icons.location_pin, color: Colors.deepOrange),

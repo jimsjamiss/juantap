@@ -15,6 +15,7 @@ import 'package:juantap/pages/users/voice_command_settings.dart';
 import 'dart:math';
 import 'package:location/location.dart' as loc;
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // only if not already imported
+import 'package:juantap/pages/users/maps_location.dart';
 
 
 
@@ -30,7 +31,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   late AnimationController _rippleController;
   late Animation<double> _rippleAnimation;
-
+  DateTime? _lastDangerSnackbarTime;
+  Map<String, dynamic> _dangerZones = {}; // from Firebase
 
   String _username = '';
   String? profileImageUrl;
@@ -50,7 +52,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   // 🚨 Danger zone vars
   final DatabaseReference _dangerRef = FirebaseDatabase.instance.ref("danger_zones");
-  Map<String, dynamic> _dangerZones = {};
   StreamSubscription<Position>? _posSub;
   final AudioPlayer _dangerPlayer = AudioPlayer();
   bool _isDangerAlertVisible = false;
@@ -80,6 +81,44 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
 
   }
+  // ✅ Called when user's location updates (for home.dart only)
+  void _checkForDangerZonesAtHome(double lat, double lng) {
+    if (_dangerZones.isEmpty) return;
+
+    // Avoid spam every few seconds
+    final now = DateTime.now();
+    if (_lastDangerSnackbarTime != null &&
+        now.difference(_lastDangerSnackbarTime!).inSeconds < 10) return;
+
+    for (var entry in _dangerZones.entries) {
+      final zone = Map<String, dynamic>.from(entry.value);
+      final zLat = (zone['lat'] as num).toDouble();
+      final zLng = (zone['lng'] as num).toDouble();
+      final zRadius = (zone['radius'] as num).toDouble();
+      final zName = zone['name'] ?? 'Danger Zone';
+
+      final distance = _calculateDistance(lat, lng, zLat, zLng);
+      if (distance <= zRadius) {
+        _lastDangerSnackbarTime = now;
+
+        // ✅ Only show if NOT on maps_location
+        final currentRoute = ModalRoute.of(context)?.settings.name ?? '';
+        if (!currentRoute.contains('maps_location')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 5),
+              backgroundColor: Colors.red.shade800,
+              content: Text(
+                '⚠️ You are inside $zName. Stay alert!',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          );
+        }
+        break;
+      }
+    }
+  }
 
   void _listenToLocationChanges() {
     _location.onLocationChanged.listen((newLoc) {
@@ -90,7 +129,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         setState(() {
           _userPosition = newPos;
         });
-        _checkIfInDangerZone(newPos.latitude, newPos.longitude);
+        _checkForDangerZonesAtHome(newPos.latitude, newPos.longitude);
       }
     });
   }
@@ -120,89 +159,134 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   AudioPlayer? player;
 
   void _listenToSosAlerts() {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
-    final sosRef = FirebaseDatabase.instance.ref('sos_alerts/$uid');
+    final currentUid = FirebaseAuth.instance.currentUser!.uid;
+    final sosRef = FirebaseDatabase.instance.ref('sos_alerts/$currentUid');
 
     sosRef.onChildAdded.listen((event) async {
-      final locationData = event.snapshot.child('location').value;
-      if (locationData == null || locationData is! Map) return;
+      if (!mounted) return;
 
-      final data = Map<String, dynamic>.from(locationData as Map);
-      final username = data['username'] ?? 'Unknown';
-      final lat = (data['lat'] as num).toDouble();
-      final lng = (data['lng'] as num).toDouble();
-      final alertSenderId = event.snapshot.key ?? 'unknown';
+      final alertKey = event.snapshot.key ?? '';
+      if (_processedAlertKeys.contains(alertKey)) return; // ✅ already handled
+      _processedAlertKeys.add(alertKey);
 
-      // ✅ 24-hour filter
-      final timestampStr = data['timestamp'];
-      DateTime alertTime;
-      if (timestampStr != null) {
-        alertTime = DateTime.tryParse(timestampStr) ?? DateTime.now();
-      } else {
-        alertTime = DateTime.now();
+      // ✅ Extract alert details
+      final alertData = Map<String, dynamic>.from(event.snapshot.value as Map);
+      final senderId = alertData['senderId'] ?? '';
+      final location = alertData['location'] ?? {};
+      final lat = (location['lat'] ?? 0).toDouble();
+      final lng = (location['lng'] ?? 0).toDouble();
+      final timestampStr = alertData['timestamp'] ?? '';
+
+      // ✅ Skip old alerts (>24h)
+      final alertTime = DateTime.tryParse(timestampStr) ?? DateTime.now();
+      if (DateTime.now().difference(alertTime).inHours >= 24) {
+        debugPrint("⏰ Ignored old alert from $senderId (older than 24h)");
+        return;
       }
 
-      final now = DateTime.now();
-      if (now.difference(alertTime).inHours >= 24) {
-        debugPrint("⏰ Ignored old alert from $username (older than 24h)");
-        return; // skip old alert
+      // ✅ Fetch sender info
+      Map<String, dynamic>? senderInfo;
+      if (senderId.isNotEmpty) {
+        final userSnap =
+        await FirebaseDatabase.instance.ref('users/$senderId').get();
+        if (userSnap.exists) {
+          senderInfo = Map<String, dynamic>.from(userSnap.value as Map);
+        }
       }
 
-      // Start custom vibration loop
+      final username = senderInfo?['username'] ?? 'Unknown User';
+      final email = senderInfo?['email'] ?? 'No email';
+      final phone = senderInfo?['phone'] ?? 'No phone';
+      final profileImage = senderInfo?['profileImage'];
+      final address = senderInfo?['address'] ?? 'Unknown';
+      final nationality = senderInfo?['nationality'] ?? '';
+      final birthdate = senderInfo?['birthdate'] ?? '';
+
+      // ✅ Start vibration + alarm
       if (await Vibration.hasVibrator() ?? false) {
-        _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-          Vibration.vibrate(duration: 1000);
-        });
+        _vibrationTimer?.cancel();
+        _vibrationTimer =
+            Timer.periodic(const Duration(seconds: 2), (_) => Vibration.vibrate(duration: 1000));
       }
 
-      // Play emergency ringtone
       player = AudioPlayer();
       try {
-        await player!.setSource(AssetSource('audio/bomboclat.mp3'));
+        await player!.setSource(AssetSource('audio/lingling.mp3'));
         await player!.setReleaseMode(ReleaseMode.loop);
         await player!.resume();
       } catch (e) {
         print('Audio error: $e');
       }
 
-      // Show alert dialog
+      // ✅ Show alert popup
       if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (_) => AlertDialog(
-          title: Text('🚨 EMERGENCY ALERT from $username'),
-          content: Text('Location: $lat, $lng'),
+          backgroundColor: const Color(0xFFFFEAEA),
+          title: Text('🚨 SOS Alert from $username'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (profileImage != null)
+                Center(
+                  child: CircleAvatar(
+                    radius: 32,
+                    backgroundImage: NetworkImage(profileImage),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Text('📍 Location: $lat, $lng'),
+              Text('🏠 Address: $address'),
+              Text('📞 Phone: $phone'),
+              Text('✉️ Email: $email'),
+              if (birthdate.isNotEmpty) Text('🎂 Birthdate: $birthdate'),
+              if (nationality.isNotEmpty) Text('🌍 Nationality: $nationality'),
+            ],
+          ),
           actions: [
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 _vibrationTimer?.cancel();
                 Vibration.cancel();
-                player?.stop();
+                await player?.stop();
                 Navigator.pop(context);
+
+                // ✅ Delete the alert from Firebase
+                await sosRef.child(alertKey).remove();
+                _processedAlertKeys.remove(alertKey);
               },
-              child: const Text('Dismiss'),
+              child: const Text('Dismiss', style: TextStyle(color: Colors.red)),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 _vibrationTimer?.cancel();
                 Vibration.cancel();
-                player?.stop();
+                await player?.stop();
                 Navigator.pop(context);
+
+                // ✅ Remove alert after opening location
+                await sosRef.child(alertKey).remove();
+                _processedAlertKeys.remove(alertKey);
+
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => ViewAlertLocationPage(userId: alertSenderId),
+                    builder: (_) => ViewAlertLocationPage(userId: senderId),
                   ),
                 );
               },
-              child: const Text('View Location'),
+              child: const Text('View Location',
+                  style: TextStyle(color: Colors.green)),
             ),
           ],
         ),
       );
     });
   }
+
 
   // ✅ Load danger zones
   void _listenToDangerZones() {
@@ -232,35 +316,44 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     });
   }
 
-// ✅ Check if inside danger zone
+// ✅ Check if inside danger zone (Snackbar version)
   void _checkIfInDangerZone(double lat, double lng) {
+    // Prevent multiple popups within short time
+    final now = DateTime.now();
+    if (_lastDangerPopupTime != null &&
+        now.difference(_lastDangerPopupTime!).inSeconds < 10) {
+      return;
+    }
+
     for (var zoneEntry in _dangerZones.entries) {
       final zone = Map<String, dynamic>.from(zoneEntry.value);
       final double zLat = (zone["lat"] as num).toDouble();
       final double zLng = (zone["lng"] as num).toDouble();
       final double zRadius = (zone["radius"] as num).toDouble();
+      final zoneName = zone["name"] ?? "Danger Zone";
 
       final dist = _calculateDistance(lat, lng, zLat, zLng);
       if (dist <= zRadius) {
-        // ✅ throttle to once every 1 minute
-        final now = DateTime.now();
-        if (_lastDangerPopupTime == null ||
-            now.difference(_lastDangerPopupTime!).inSeconds >= 30) {
-          _lastDangerPopupTime = now;
+        _lastDangerPopupTime = now;
 
-          String msg = "You are inside a danger zone!";
-          if (zone["reports"] is Map && (zone["reports"] as Map).isNotEmpty) {
-            final reports = Map<String, dynamic>.from(zone["reports"]);
-            final last = reports.entries.last.value;
-            msg = last["message"] ?? msg;
-          }
-          _triggerDangerAlert(zone["name"] ?? "Danger Zone", msg);
+        // ✅ Show snackbar instead of redirection
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 5),
+              backgroundColor: Colors.red.shade700,
+              content: Text(
+                "⚠️ You are currently inside a Danger Zone. Stay alert!",
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          );
         }
-        break;
+
+        break; // stop after detecting one zone
       }
     }
   }
-
 
 // ✅ Haversine distance
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
@@ -274,54 +367,52 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     return R * c;
   }
 
-// ✅ Popup alert for danger zone
-  void _triggerDangerAlert(String zoneName, String message) async {
-    if (_isDangerAlertVisible) return;
-    _isDangerAlertVisible = true;
 
-    if (await Vibration.hasVibrator() ?? false) {
-      _vibrationTimer?.cancel();
-      _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-        Vibration.vibrate(duration: 1000);
-      });
-    }
-
-    try {
-      await _dangerPlayer.setSource(AssetSource("sounds/lingling.mp3"));
-      await _dangerPlayer.setReleaseMode(ReleaseMode.loop);
-      await _dangerPlayer.resume();
-    } catch (e) {
-      debugPrint("Audio error: $e");
-    }
-
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: Text("⚠️ $zoneName"),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () {
-              _dangerPlayer.stop();
-              _vibrationTimer?.cancel();
-              Vibration.cancel();
-              _isDangerAlertVisible = false;
-              Navigator.pop(context);
-
-              // ✅ force navigate to maps after closing popup
-              Navigator.pushNamed(context, '/maps_location');
-            },
-            child: const Text("OK"),
-          ),
-        ],
-      ),
-    );
-  }
-
-
-
+  // ✅ Popup alert for danger zone
+  // void _triggerDangerAlert(String zoneName, String message) async {
+  //   if (_isDangerAlertVisible) return;
+  //   _isDangerAlertVisible = true;
+  //
+  //   if (await Vibration.hasVibrator() ?? false) {
+  //     _vibrationTimer?.cancel();
+  //     _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+  //       Vibration.vibrate(duration: 1000);
+  //     });
+  //   }
+  //
+  //   try {
+  //     await _dangerPlayer.setSource(AssetSource("sounds/lingling.mp3"));
+  //     await _dangerPlayer.setReleaseMode(ReleaseMode.loop);
+  //     await _dangerPlayer.resume();
+  //   } catch (e) {
+  //     debugPrint("Audio error: $e");
+  //   }
+  //
+  //   if (!mounted) return;
+  //   showDialog(
+  //     context: context,
+  //     barrierDismissible: false,
+  //     builder: (_) => AlertDialog(
+  //       title: Text("⚠️ $zoneName"),
+  //       content: Text(message),
+  //       actions: [
+  //         TextButton(
+  //           onPressed: () {
+  //             _dangerPlayer.stop();
+  //             _vibrationTimer?.cancel();
+  //             Vibration.cancel();
+  //             _isDangerAlertVisible = false;
+  //             Navigator.pop(context);
+  //
+  //             // ✅ force navigate to maps after closing popup
+  //             Navigator.pushNamed(context, '/maps_location');
+  //           },
+  //           child: const Text("OK"),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {

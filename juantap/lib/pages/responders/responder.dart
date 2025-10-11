@@ -13,7 +13,6 @@ import 'incident_reports.dart';
 import 'package:juantap/pages/users/login.dart';
 import 'package:juantap/pages/responders/edit_responder_profile.dart';
 
-
 class ResponderDashboard extends StatelessWidget {
   const ResponderDashboard({super.key});
 
@@ -21,6 +20,7 @@ class ResponderDashboard extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Responder Dashboard',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
         useMaterial3: true,
@@ -43,13 +43,11 @@ class _MyHomePageState extends State<MyHomePage> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
-
   File? _profileImage;
   String? _profileImageUrl;
   String _username = '';
   List<Map<String, String>> recentAlerts = [];
   bool _isMounted = true;
-
   AudioPlayer? player;
   Timer? _vibrationTimer;
 
@@ -68,13 +66,11 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
-  // ✅ Fetch responder info from Firebase
   Future<void> _fetchResponderData() async {
     if (user == null) return;
     final ref = FirebaseDatabase.instance.ref('users/${user!.uid}');
     final snapshot = await ref.get();
-
-    if (snapshot.exists) {
+    if (snapshot.exists && mounted) {
       final data = Map<String, dynamic>.from(snapshot.value as Map);
       setState(() {
         _username = data['username'] ?? '';
@@ -85,12 +81,11 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // ✅ Upload image to Cloudinary and save URL in Firebase
   Future<void> _uploadProfileImage(File imageFile) async {
-    const cloudName = 'YOUR_CLOUD_NAME'; // 🔁 replace with your Cloudinary name
-    const uploadPreset = 'YOUR_UPLOAD_PRESET'; // 🔁 replace with your upload preset
-
+    const cloudName = 'YOUR_CLOUD_NAME';
+    const uploadPreset = 'YOUR_UPLOAD_PRESET';
     final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+
     final request = http.MultipartRequest('POST', url)
       ..fields['upload_preset'] = uploadPreset
       ..files.add(await http.MultipartFile.fromPath('file', imageFile.path));
@@ -99,8 +94,9 @@ class _MyHomePageState extends State<MyHomePage> {
     final responseData = await response.stream.bytesToString();
 
     if (response.statusCode == 200) {
-      final uploadedUrl = RegExp(r'"secure_url":"([^"]+)"').firstMatch(responseData)?.group(1);
-      if (uploadedUrl != null && user != null) {
+      final uploadedUrl =
+      RegExp(r'"secure_url":"([^"]+)"').firstMatch(responseData)?.group(1);
+      if (uploadedUrl != null && user != null && mounted) {
         await FirebaseDatabase.instance
             .ref('users/${user!.uid}/profileImage')
             .set(uploadedUrl);
@@ -118,10 +114,8 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // ✅ Save profile changes to Firebase
   Future<void> _saveProfile() async {
     if (user == null) return;
-
     final newName = _nameController.text.trim();
     final newPhone = _phoneController.text.trim();
     final newEmail = _emailController.text.trim();
@@ -134,16 +128,14 @@ class _MyHomePageState extends State<MyHomePage> {
       'profileImage': _profileImageUrl,
     });
 
-    setState(() {
-      _username = newName;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Profile updated successfully ✅')),
-    );
+    if (mounted) {
+      setState(() => _username = newName);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile updated successfully ✅')),
+      );
+    }
   }
 
-  // ✅ Show profile edit dialog
   void _showEditProfileDialog() {
     _nameController.text = _username;
     showDialog(
@@ -164,30 +156,18 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                TextField(
-                  controller: _emailController,
-                  decoration: const InputDecoration(labelText: 'Email'),
-                ),
-                TextField(
-                  controller: _phoneController,
-                  decoration: const InputDecoration(labelText: 'Phone'),
-                ),
+                TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Name')),
+                TextField(controller: _emailController, decoration: const InputDecoration(labelText: 'Email')),
+                TextField(controller: _phoneController, decoration: const InputDecoration(labelText: 'Phone')),
               ],
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
             ElevatedButton(
               onPressed: () async {
                 await _saveProfile();
-                Navigator.pop(context);
+                if (mounted) Navigator.pop(context);
               },
               child: const Text('Save'),
             ),
@@ -197,15 +177,16 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // ✅ Listen to SOS alerts from users
+  // ✅ UPDATED: Listen directly to full responder_alerts node
   void _listenToResponderAlerts() {
     final responderAlertsRef = FirebaseDatabase.instance.ref('responder_alerts');
     responderAlertsRef.onChildAdded.listen((event) async {
-      final locationSnapshot = event.snapshot.child('location');
-      if (locationSnapshot.value == null || !_isMounted) return;
+      if (!_isMounted || !mounted) return;
+      if (!event.snapshot.exists) return;
 
-      final locationData = Map<String, dynamic>.from(locationSnapshot.value as Map);
-      final timestampString = locationData['timestamp'];
+      final alertData = Map<String, dynamic>.from(event.snapshot.value as Map);
+
+      final timestampString = alertData['timestamp'];
       if (timestampString == null) return;
 
       final timestamp = DateTime.tryParse(timestampString);
@@ -215,75 +196,135 @@ class _MyHomePageState extends State<MyHomePage> {
       final diff = now.difference(timestamp);
       if (diff.inHours >= 24) return;
 
-      final username = locationData['username'] ?? 'Unknown';
-      final lat = locationData['lat'];
-      final lng = locationData['lng'];
+      final username = alertData['username'] ?? 'Unknown';
+      final lat = alertData['location']?['lat'] ?? 0.0;
+      final lng = alertData['location']?['lng'] ?? 0.0;
 
       final alert = {
+        'userId': alertData['userId'] ?? '',
         'name': username.toString(),
+        'email': alertData['email'] ?? '',
+        'phone': alertData['phone'] ?? '',
+        'address': alertData['address'] ?? '',
+        'nationality': alertData['nationality'] ?? '',
+        'birthdate': alertData['birthdate'] ?? '',
+        'profileImage': alertData['profileImage'] ?? '',
         'location': '$lat, $lng',
         'time': TimeOfDay.now().format(context),
-        'reason': 'SOS Alert',
+        'reason': alertData['reason'] ?? 'SOS Alert',
         'date': now.toLocal().toString().split(' ')[0],
-        'image': 'https://via.placeholder.com/60',
       };
 
-      if (!context.mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
+      await _showSosPopup(context, username, lat, lng, alert);
+      if (mounted) {
+        setState(() => recentAlerts.add(
+          alert.map((key, value) => MapEntry(key, value.toString())),
+        ));
+
+      }
+    });
+  }
+
+  Future<void> _showSosPopup(
+      BuildContext context,
+      String username,
+      double lat,
+      double lng,
+      Map<String, dynamic> alert,
+      ) async {
+    _startAlertFeedback();
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return AlertDialog(
           backgroundColor: const Color(0xFFFFEAEA),
           title: Text('🚨 SOS Alert from $username'),
-          content: Text('Location: $lat, $lng'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('📍 Location: $lat, $lng'),
+              const SizedBox(height: 8),
+              if (alert['address'] != null && alert['address']!.isNotEmpty)
+                Text('🏠 Address: ${alert['address']}'),
+              if (alert['phone'] != null && alert['phone']!.isNotEmpty)
+                Text('📞 Phone: ${alert['phone']}'),
+              if (alert['email'] != null && alert['email']!.isNotEmpty)
+                Text('✉️ Email: ${alert['email']}'),
+              if (alert['birthdate'] != null && alert['birthdate']!.isNotEmpty)
+                Text('🎂 Birthdate: ${alert['birthdate']}'),
+              if (alert['nationality'] != null && alert['nationality']!.isNotEmpty)
+                Text('🌍 Nationality: ${alert['nationality']}'),
+            ],
+          ),
           actions: [
             TextButton(
               onPressed: () {
-                _vibrationTimer?.cancel();
-                Vibration.cancel();
-                player?.stop();
-                Navigator.pop(context);
+                _stopAlertFeedback();
+                Navigator.of(context, rootNavigator: true).pop();
               },
-              child: const Text('Dismiss'),
+              child: const Text('Dismiss', style: TextStyle(color: Colors.red)),
             ),
             TextButton(
               onPressed: () {
-                _vibrationTimer?.cancel();
-                Vibration.cancel();
-                player?.stop();
-                Navigator.pop(context);
+                _stopAlertFeedback();
+                Navigator.of(context, rootNavigator: true).pop();
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => SendAlertResponsePage(data: alert)),
                 );
               },
-              child: const Text('Accept'),
+              child: const Text('Accept', style: TextStyle(color: Colors.green)),
             ),
           ],
-        ),
-      );
-
-      if (_isMounted) setState(() => recentAlerts.add(alert));
-
-      if (await Vibration.hasVibrator() ?? false) {
-        _vibrationTimer?.cancel();
-        _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-          Vibration.vibrate(duration: 1000);
-        });
-      }
-
-      player = AudioPlayer();
-      try {
-        await player!.setSource(AssetSource('audio/bomboclat.mp3'));
-        await player!.setReleaseMode(ReleaseMode.loop);
-        await player!.resume();
-      } catch (e) {
-        print('Audio error: $e');
-      }
-    });
+        );
+      },
+    );
   }
 
-  void _logout() async {
+  void _startAlertFeedback() async {
+    // Stop any previous vibration or sound loop
+    _stopAlertFeedback();
+
+    // Start vibration safely
+    if (await Vibration.hasVibrator() ?? false) {
+      _vibrationTimer?.cancel(); // cancel old timer
+      _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (mounted) {
+          Vibration.vibrate(duration: 800);
+        }
+      });
+    }
+
+    // Start sound loop
+    player ??= AudioPlayer();
+    try {
+      await player!.setSource(AssetSource('audio/bomboclat.mp3'));
+      await player!.setReleaseMode(ReleaseMode.loop);
+      await player!.resume();
+    } catch (e) {
+      debugPrint('Audio error: $e');
+    }
+  }
+
+
+  void _stopAlertFeedback() {
+    // Stop vibration loop safely
+    _vibrationTimer?.cancel();
+    _vibrationTimer = null;
+    Vibration.cancel();
+
+    // Stop audio loop safely
+    if (player != null) {
+      player!.stop();
+    }
+  }
+
+
+  Future<void> _logout() async {
     final shouldLogout = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -295,19 +336,15 @@ class _MyHomePageState extends State<MyHomePage> {
         ],
       ),
     );
-
-    if (shouldLogout == true) {
+    if (shouldLogout == true && mounted) {
       await FirebaseAuth.instance.signOut();
-      if (context.mounted) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
-      }
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final notifications = recentAlerts;
-
     return Scaffold(
       backgroundColor: const Color(0xFF2A9D8F),
       appBar: AppBar(
@@ -324,7 +361,9 @@ class _MyHomePageState extends State<MyHomePage> {
                 onTap: _showEditProfileDialog,
                 child: Text(_username, style: const TextStyle(fontSize: 18)),
               ),
-              accountEmail: Text(_emailController.text.isEmpty ? "responder@juantap.com" : _emailController.text),
+              accountEmail: Text(
+                _emailController.text.isEmpty ? "responder@juantap.com" : _emailController.text,
+              ),
               currentAccountPicture: GestureDetector(
                 onTap: _pickAndUploadImage,
                 child: CircleAvatar(
@@ -350,10 +389,7 @@ class _MyHomePageState extends State<MyHomePage> {
               title: const Text('Edit Profile', style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const EditResponderProfilePage()),
-                );
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const EditResponderProfilePage()));
               },
             ),
             const Divider(color: Colors.white54),
@@ -370,8 +406,10 @@ class _MyHomePageState extends State<MyHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Emergency Notifications',
-                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            const Text(
+              'Emergency Notifications',
+              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 10),
             Expanded(
               child: ListView.builder(
@@ -382,35 +420,40 @@ class _MyHomePageState extends State<MyHomePage> {
                   final lat = double.tryParse(latLng[0].trim()) ?? 0;
                   final lng = double.tryParse(latLng[1].trim()) ?? 0;
 
-                  return Container(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFEAEA),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item['name']!,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                        Text(item['location']!, style: const TextStyle(fontSize: 12)),
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          height: 160,
-                          child: GoogleMap(
-                            initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 14),
-                            markers: {
-                              Marker(
-                                markerId: MarkerId(item['name']!),
-                                position: LatLng(lat, lng),
-                              ),
-                            },
-                            zoomControlsEnabled: false,
-                            liteModeEnabled: true,
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => SendAlertResponsePage(data: item)),
+                      );
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFEAEA),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item['name']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          Text(item['location']!, style: const TextStyle(fontSize: 12)),
+                          const SizedBox(height: 6),
+                          SizedBox(
+                            height: 160,
+                            child: GoogleMap(
+                              initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 14),
+                              markers: {
+                                Marker(markerId: MarkerId(item['name']!), position: LatLng(lat, lng)),
+                              },
+                              zoomControlsEnabled: false,
+                              liteModeEnabled: true,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   );
                 },

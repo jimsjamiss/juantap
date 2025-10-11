@@ -5,12 +5,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:juantap/pages/responders/responder.dart';
+
 
 class EditResponderProfilePage extends StatefulWidget {
   const EditResponderProfilePage({super.key});
 
   @override
-  State<EditResponderProfilePage> createState() => _EditResponderProfilePageState();
+  State<EditResponderProfilePage> createState() =>
+      _EditResponderProfilePageState();
 }
 
 class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
@@ -19,11 +22,15 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _addressController = TextEditingController();
+  final _currentPasswordController = TextEditingController();
+  final _newPasswordController = TextEditingController();
 
   final _user = FirebaseAuth.instance.currentUser;
   File? _selectedImage;
   String? _profileImageUrl;
   bool _isSaving = false;
+  bool _obscureCurrent = true;
+  bool _obscureNew = true;
 
   @override
   void initState() {
@@ -58,7 +65,6 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
   Future<String?> _uploadImageToCloudinary(File image) async {
     const cloudName = 'dfop0muxq';
     const uploadPreset = 'juantap_images';
-
     final url = Uri.parse("https://api.cloudinary.com/v1_1/$cloudName/image/upload");
 
     final request = http.MultipartRequest('POST', url)
@@ -84,9 +90,7 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
         String? imageUrl = _profileImageUrl;
         if (_selectedImage != null) {
           imageUrl = await _uploadImageToCloudinary(_selectedImage!);
-          setState(() {
-            _profileImageUrl = imageUrl;
-          });
+          setState(() => _profileImageUrl = imageUrl);
         }
 
         final ref = FirebaseDatabase.instance.ref('users/${_user!.uid}');
@@ -100,7 +104,7 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile updated successfully!')),
+          const SnackBar(content: Text('Profile updated successfully! ✅')),
         );
         Navigator.pushReplacementNamed(context, '/responder_dashboard');
       } catch (e) {
@@ -110,6 +114,57 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
       } finally {
         setState(() => _isSaving = false);
       }
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final currentPassword = _currentPasswordController.text.trim();
+    final newPassword = _newPasswordController.text.trim();
+
+    if (currentPassword.isEmpty || newPassword.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill out both password fields.')),
+      );
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('New password must be at least 6 characters.')),
+      );
+      return;
+    }
+
+    try {
+      final cred = EmailAuthProvider.credential(
+        email: _user!.email!,
+        password: currentPassword,
+      );
+      await _user!.reauthenticateWithCredential(cred);
+      await _user!.updatePassword(newPassword);
+
+      _currentPasswordController.clear();
+      _newPasswordController.clear();
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Password Changed'),
+            content: const Text('Your password has been successfully updated.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK', style: TextStyle(color: Colors.green)),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to change password: $e')),
+      );
     }
   }
 
@@ -128,13 +183,23 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pushReplacementNamed(context, '/responder_dashboard'),
+                      onPressed: () {
+                        // ✅ Smooth back navigation
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ResponderDashboard()),
+                        );
+                      },
                     ),
                     const Expanded(
                       child: Center(
                         child: Text(
                           'Edit Profile',
-                          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
@@ -151,7 +216,8 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                           ? FileImage(_selectedImage!)
                           : (_profileImageUrl != null
                           ? NetworkImage(_profileImageUrl!)
-                          : const AssetImage('assets/shield.png')) as ImageProvider,
+                          : const AssetImage('assets/shield.png'))
+                      as ImageProvider,
                     ),
                     Positioned(
                       bottom: 0,
@@ -174,15 +240,20 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                 const Align(
                   alignment: Alignment.centerLeft,
                   child: Text('Responder Information',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
                 ),
                 const SizedBox(height: 12),
                 _buildInputField(_nameController, 'Name'),
-                _buildInputField(_phoneController, 'Phone Number', keyboardType: TextInputType.phone),
+                _buildInputField(_phoneController, 'Phone Number',
+                    keyboardType: TextInputType.phone),
                 _buildInputField(_emailController, 'Email'),
                 _buildInputField(_addressController, 'Address'),
-                const SizedBox(height: 20),
 
+                const SizedBox(height: 25),
+                // ✅ Save button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -205,15 +276,13 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF417B63),
                               ),
-                              child: const Text('Yes', style: TextStyle(color: Colors.white)),
+                              child: const Text('Yes',
+                                  style: TextStyle(color: Colors.white)),
                             ),
                           ],
                         ),
                       );
-
-                      if (confirmed == true) {
-                        _saveChanges();
-                      }
+                      if (confirmed == true) _saveChanges();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFF7F6D9),
@@ -224,7 +293,56 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                     ),
                     child: _isSaving
                         ? const CircularProgressIndicator(color: Colors.black)
-                        : const Text('Save', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                        : const Text('Save',
+                        style: TextStyle(
+                            color: Colors.black, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+
+                const SizedBox(height: 25),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Change Password',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
+                ),
+                const SizedBox(height: 12),
+                _buildPasswordField(
+                  controller: _currentPasswordController,
+                  label: 'Current Password',
+                  obscure: _obscureCurrent,
+                  toggle: () =>
+                      setState(() => _obscureCurrent = !_obscureCurrent),
+                ),
+                _buildPasswordField(
+                  controller: _newPasswordController,
+                  label: 'New Password',
+                  obscure: _obscureNew,
+                  toggle: () => setState(() => _obscureNew = !_obscureNew),
+                ),
+
+                const SizedBox(height: 12),
+                // ✅ Change Password Button now matches Save Button color
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _changePassword,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFF7F6D9),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                    child: const Text(
+                      'Change Password',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -243,12 +361,42 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
         controller: controller,
         readOnly: readOnly,
         keyboardType: keyboardType,
-        validator: (value) => value == null || value.isEmpty ? 'Enter $label' : null,
+        validator: (value) =>
+        value == null || value.isEmpty ? 'Enter $label' : null,
         style: const TextStyle(color: Colors.black),
         decoration: InputDecoration(
           filled: true,
           fillColor: Colors.white,
           labelText: label,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPasswordField({
+    required TextEditingController controller,
+    required String label,
+    required bool obscure,
+    required VoidCallback toggle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: TextFormField(
+        controller: controller,
+        obscureText: obscure,
+        style: const TextStyle(color: Colors.black),
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: Colors.white,
+          labelText: label,
+          suffixIcon: IconButton(
+            icon: Icon(
+              obscure ? Icons.visibility_off : Icons.visibility,
+              color: Colors.grey,
+            ),
+            onPressed: toggle,
+          ),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
