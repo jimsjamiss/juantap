@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+env/
+*.log
+
+# Firebase private key
+serviceAccountKey.json
+
+# macOS / Windows junk
+.DS_Store
+Thumbs.db
