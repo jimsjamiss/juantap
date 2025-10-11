@@ -115,4 +115,7 @@ if __name__ == "__main__":
     print("🚦 Flask server starting up...")
     print("📋 Registered routes:")
     print(app.url_map)
-    app.run(debug=True)
+    import os
+
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
