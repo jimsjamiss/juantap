@@ -31,12 +31,9 @@ def index():
     return {"message": "Flask + Firebase + ORS API is running properly!"}
 
 
-@app.route("/safe-route", methods=["POST", "GET"])
+@app.route("/safe-route", methods=["POST"])
 def safe_route():
     try:
-        if request.method == "GET":
-            return jsonify({"message": "Use POST with origin and destination."})
-
         data = request.get_json(force=True)
         origin = data.get("origin")
         destination = data.get("destination")
@@ -44,18 +41,10 @@ def safe_route():
         if not origin or not destination:
             return jsonify({"error": "Missing origin or destination"}), 400
 
-        # 🔹 Step 1: Load danger zones
-        danger_zones = {}
-        if FIREBASE_OK:
-            try:
-                danger_zones = db.reference("danger_zones").get() or {}
-                print(f"📍 Loaded {len(danger_zones)} danger zones from Firebase.")
-            except Exception as e:
-                print("⚠️ Could not load danger zones:", e)
-        else:
-            print("⚠️ Skipping Firebase (not connected).")
+        # 🔹 Load danger zones
+        danger_zones = db.reference("danger_zones").get() or {}
 
-        # 🔹 Step 2: Call OpenRouteService
+        # 🔹 Request the main route from OpenRouteService
         ors_url = "https://api.openrouteservice.org/v2/directions/driving-car"
         headers = {
             "Authorization": ORS_API_KEY.strip(),
@@ -63,53 +52,56 @@ def safe_route():
         }
         payload = {"coordinates": [origin, destination]}
         ors_response = requests.post(ors_url, json=payload, headers=headers)
+
+        if ors_response.status_code != 200:
+            return jsonify({"error": "ORS request failed", "details": ors_response.text}), 500
+
         ors_data = ors_response.json()
+        route_geometry = ors_data["features"][0]["geometry"]["coordinates"]
+        route_coords = [(lat, lng) for lng, lat in route_geometry]
 
-        print("🔁 ORS Response Code:", ors_response.status_code)
-        print("📦 ORS Keys:", list(ors_data.keys()))
+        # 🔹 Compute if route intersects any danger zone
+        risky_zones = []
+        adjusted_points = []
 
-        # 🔹 Step 3: Decode geometry (handle both formats)
-        route_coords = []
-        if "features" in ors_data:
-            route_geometry = ors_data["features"][0]["geometry"]["coordinates"]
-            route_coords = [(lat, lng) for lng, lat in route_geometry]
-        elif "routes" in ors_data:
-            encoded_polyline = ors_data["routes"][0]["geometry"]
-            route_coords = [(lat, lng) for lat, lng in polyline.decode(encoded_polyline)]
-        else:
+        for (lat, lng) in route_coords:
+            in_danger = False
+            for zone_id, zone in danger_zones.items():
+                zlat, zlng, zrad = zone["lat"], zone["lng"], zone["radius"]
+                dist = ((lat - zlat)**2 + (lng - zlng)**2)**0.5 * 111000
+                if dist <= zrad:
+                    in_danger = True
+                    risky_zones.append(zone["name"])
+                    # Offset 100 m outward in same direction from zone center
+                    offset_factor = (zrad + 100) / 111000
+                    lat = zlat + (lat - zlat) * (offset_factor / (dist / 111000))
+                    lng = zlng + (lng - zlng) * (offset_factor / (dist / 111000))
+            adjusted_points.append((lat, lng))
+
+        # 🔹 Generate new safe route request from adjusted points
+        safe_start = [adjusted_points[0][1], adjusted_points[0][0]]
+        safe_end = [adjusted_points[-1][1], adjusted_points[-1][0]]
+        payload_safe = {"coordinates": [safe_start, safe_end]}
+        ors_safe_response = requests.post(ors_url, json=payload_safe, headers=headers)
+        if ors_safe_response.status_code != 200:
             return jsonify({
-                "error": "No valid route found in ORS response",
-                "details": ors_data
+                "error": "Safe route request failed",
+                "details": ors_safe_response.text
             }), 500
 
-        # 🔹 Step 4: Danger zone proximity
-        risky_points = []
-        for lat, lng in route_coords:
-            for zone_id, zone in danger_zones.items():
-                zlat, zlng, zrad = zone.get("lat"), zone.get("lng"), zone.get("radius")
-                if zlat and zlng and zrad:
-                    distance = ((lat - zlat) ** 2 + (lng - zlng) ** 2) ** 0.5 * 111000
-                    if distance < zrad:
-                        risky_points.append({
-                            "zone": zone.get("name", "Unnamed Zone"),
-                            "distance_m": round(distance, 1),
-                            "location": {"lat": lat, "lng": lng}
-                        })
-
-        risk_level = "High" if risky_points else "Low"
+        ors_safe_data = ors_safe_response.json()
+        safe_geometry = ors_safe_data["features"][0]["geometry"]["coordinates"]
+        safe_route_coords = [(lat, lng) for lng, lat in safe_geometry]
 
         return jsonify({
             "status": "OK",
-            "risk_level": risk_level,
-            "risky_points": risky_points,
-            "route_points_count": len(route_coords),
-            "sample_points": route_coords[:5]
+            "risky_zones": list(set(risky_zones)),
+            "route_points_count": len(safe_route_coords),
+            "safe_route": safe_route_coords
         })
 
     except Exception as e:
-        print("🔥 Exception:", e)
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     print("🚦 Flask server starting up...")
