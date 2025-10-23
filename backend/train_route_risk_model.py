@@ -7,7 +7,7 @@ import joblib
 import numpy as np
 from datetime import datetime
 import math
-import json
+import json, os
 import polyline
 
 # ---------------------------------------------------------
@@ -19,7 +19,12 @@ CORS(app)
 # ---------------------------------------------------------
 # 🔹 Firebase Initialization
 # ---------------------------------------------------------
-cred = credentials.Certificate("serviceAccountKey.json")
+firebase_key_data = os.environ.get("FIREBASE_KEY")
+if not firebase_key_data:
+    raise ValueError("Missing FIREBASE_KEY environment variable!")
+
+cred = credentials.Certificate(json.loads(firebase_key_data))
+
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://juantap-db-2dbeb-default-rtdb.firebaseio.com/'
 })
