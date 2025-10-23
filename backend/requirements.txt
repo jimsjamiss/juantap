@@ -1,5 +1,9 @@
-flask
+Flask
 flask-cors
-requests
 firebase-admin
+requests
+joblib
+numpy
 polyline
+scikit-learn
+gunicorn
