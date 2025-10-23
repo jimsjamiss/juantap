@@ -6,57 +6,87 @@ class SOSService {
   static Future<void> sendSosAlert() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        print('❌ No user is currently signed in.');
+        return;
+      }
 
       final uid = user.uid;
-      final userRef = FirebaseDatabase.instance.ref('users/$uid');
-      final contactsRef = FirebaseDatabase.instance.ref('contacts/$uid');
-      final sosRef = FirebaseDatabase.instance.ref('sos_alerts');
-      final responderAlertRef = FirebaseDatabase.instance.ref('responder_alerts');
+      final db = FirebaseDatabase.instance.ref();
 
-      final userSnapshot = await userRef.get();
-      if (!userSnapshot.exists) return;
+      // 🔹 1. Fetch user profile info
+      final userSnapshot = await db.child('users/$uid').get();
+      if (!userSnapshot.exists) {
+        print('❌ No user data found in database for UID: $uid');
+        return;
+      }
 
       final userData = Map<String, dynamic>.from(userSnapshot.value as Map);
-      final username = userData['username'] ?? 'Unknown';
 
+      final username = userData['username'] ?? 'Unknown';
+      final email = userData['email'] ?? '';
+      final phone = userData['phone'] ?? '';
+      final address = userData['address'] ?? '';
+      final birthdate = userData['birthdate'] ?? '';
+      final nationality = userData['nationality'] ?? '';
+      final profileImage = userData['profileImage'] ?? '';
+
+      // 🔹 2. Get current location
       LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return;
-
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-
-      // Send to contacts
-      final contactsSnapshot = await contactsRef.get();
-      if (contactsSnapshot.exists) {
-        final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
-        for (final contactId in contacts.keys) {
-          await sosRef.child(contactId).child(uid).child('location').set({
-            'username': username,
-            'timestamp': DateTime.now().toIso8601String(),
-            'lat': position.latitude,
-            'lng': position.longitude,
-          });
-        }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        print('❌ Location permission denied.');
+        return;
       }
 
-      // Send to responders
-      final newResponderRef = responderAlertRef.push();
-      await newResponderRef.set({
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // 🔹 3. Construct complete SOS alert payload
+      final alertData = {
+        'userId': uid,
+        'username': username,
+        'email': email,
+        'phone': phone,
+        'address': address,
+        'birthdate': birthdate,
+        'nationality': nationality,
+        'profileImage': profileImage,
+        'reason': 'SOS Alert',
+        'timestamp': DateTime.now().toIso8601String(),
         'location': {
           'lat': position.latitude,
           'lng': position.longitude,
-          'timestamp': DateTime.now().toIso8601String(),
-          'userId': uid,
-          'username': username,
-        }
-      });
+        },
+      };
 
-      print("🚨 SOS sent successfully via SOSService");
+      // 🔹 4. Send to user's emergency contacts (sos_alerts)
+      final contactsRef = db.child('contacts/$uid');
+      final contactsSnapshot = await contactsRef.get();
+
+      if (contactsSnapshot.exists) {
+        final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
+        for (final contactId in contacts.keys) {
+          await db.child('sos_alerts/$contactId/$uid').set(alertData);
+          print('📨 SOS sent to contact: $contactId');
+        }
+      } else {
+        print('ℹ️ No emergency contacts found for this user.');
+      }
+
+      // 🔹 5. Send to responder_alerts (for real-time monitoring)
+      await db.child('responder_alerts').push().set(alertData);
+      print('🚨 SOS alert successfully pushed to responder_alerts.');
+
+      // ✅ 6. Log success
+      print("✅ SOS alert successfully sent to responders and contacts.");
     } catch (e) {
-      print('❌ Error sending SOS: $e');
+      print('❌ Error sending SOS alert: $e');
     }
   }
 }

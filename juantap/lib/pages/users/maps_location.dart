@@ -34,7 +34,8 @@ class _MapsLocationState extends State<MapsLocation> {
   bool _isDangerAlertVisible = false;
   bool _followUser = true;
 
-  final String _flaskUrl = "https://juantap-flask.onrender.com/safe-route";
+  //final String _flaskUrl = "https://juantap-flask.onrender.com/ml-safe-route";
+  final String _flaskUrl = "http://192.168.1.3:5000/ml-safe-route";
 
   @override
   void initState() {
@@ -72,7 +73,6 @@ class _MapsLocationState extends State<MapsLocation> {
       _isPermissionGranted = true;
     });
 
-    // ✅ Live updates
     _locationSubscription = _location.onLocationChanged.listen((newLoc) {
       if (!mounted) return;
       if (newLoc.latitude == null || newLoc.longitude == null) return;
@@ -86,7 +86,6 @@ class _MapsLocationState extends State<MapsLocation> {
         );
       }
 
-      // 🔎 Check danger zones continuously
       _checkLiveDangerZones(newPos);
     });
   }
@@ -114,15 +113,15 @@ class _MapsLocationState extends State<MapsLocation> {
       markers.add(Marker(
         markerId: MarkerId(id),
         position: pos,
-        infoWindow: InfoWindow(title: zone["name"] ?? "Danger Zone"),
+        infoWindow: InfoWindow(title: zone["name"] ?? "Monitored Area"),
       ));
 
       circles.add(Circle(
         circleId: CircleId(id),
         center: pos,
         radius: (zone["radius"] as num).toDouble(),
-        fillColor: Colors.redAccent.withOpacity(0.25),
-        strokeColor: Colors.redAccent,
+        fillColor: Colors.orangeAccent.withOpacity(0.20),
+        strokeColor: Colors.orangeAccent,
         strokeWidth: 2,
       ));
     });
@@ -134,7 +133,7 @@ class _MapsLocationState extends State<MapsLocation> {
     });
   }
 
-  // ✅ NEW: Check danger zones live while user moves
+  // ✅ Check danger zones live while user moves
   void _checkLiveDangerZones(LatLng userPos) {
     if (_isDangerAlertVisible) return;
 
@@ -145,16 +144,11 @@ class _MapsLocationState extends State<MapsLocation> {
       final distance = _calculateDistance(userPos, center);
 
       if (distance <= radius) {
-        final zoneName = zone["name"] ?? "Danger Zone";
-        final message = (zone["reports"] is Map && (zone["reports"] as Map).isNotEmpty)
-            ? Map<String, dynamic>.from(zone["reports"])
-            .entries
-            .last
-            .value["message"] ??
-            "You are inside a danger zone!"
-            : "You are inside a danger zone!";
+        final zoneName = zone["name"] ?? "Monitored Area";
+        final message = "You’re currently in or near $zoneName. "
+            "Please stay alert and be aware of your surroundings.";
 
-        _showDangerAlert(zoneName, message,
+        _showGentleAlert(zoneName, message,
             userPos: userPos, zoneCenter: center, zoneRadius: radius);
         break;
       }
@@ -174,8 +168,30 @@ class _MapsLocationState extends State<MapsLocation> {
     return R * c;
   }
 
-  // ✅ Show danger popup inside maps
-  void _showDangerAlert(
+  // ✅ Generate safe point dynamically outside zone
+  LatLng _generateSafePoint(LatLng dangerCenter, double radiusMeters) {
+    const double buffer = 80; // ensures it's outside the danger zone
+    final double safeDistance = radiusMeters + buffer;
+
+    final double angle = Random().nextDouble() * 2 * pi;
+
+    final double offsetLat = (safeDistance / 111320) * cos(angle);
+    final double offsetLng =
+        (safeDistance / (111320 * cos(dangerCenter.latitude * pi / 180))) *
+            sin(angle);
+
+    final safePoint = LatLng(
+      dangerCenter.latitude + offsetLat,
+      dangerCenter.longitude + offsetLng,
+    );
+
+    debugPrint(
+        "🟢 Generated safe point outside danger zone: ${safePoint.latitude}, ${safePoint.longitude}");
+    return safePoint;
+  }
+
+  // 🌿 Gentle, calming alert popup (UI unchanged)
+  void _showGentleAlert(
       String zoneName,
       String message, {
         required LatLng userPos,
@@ -186,81 +202,125 @@ class _MapsLocationState extends State<MapsLocation> {
     _isDangerAlertVisible = true;
 
     if (await Vibration.hasVibrator() ?? false) {
-      _vibrationTimer?.cancel();
-      _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-        Vibration.vibrate(duration: 800);
-      });
+      Vibration.vibrate(duration: 400);
     }
 
-    // try {
-    //   //await _dangerPlayer.setSource(AssetSource("audio/lingling.mp3"));
-    //   await _dangerPlayer.setReleaseMode(ReleaseMode.loop);
-    //   await _dangerPlayer.resume();
-    // } catch (e) {
-    //   debugPrint("Audio error: $e");
-    // }
-
     if (!mounted) return;
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFFEFFEF5),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text("⚠️ Danger Zone: $zoneName"),
-        content: Text(
-          "$message\n\nWould you like to navigate to a safer route outside the danger area?",
-          textAlign: TextAlign.center,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
         ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          ElevatedButton.icon(
-            icon: const Icon(Icons.directions, color: Colors.white),
-            label: const Text("Take Alternate Route"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFFE8FFF1), Color(0xFFD3F8EB)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            onPressed: () {
-              _dangerPlayer.stop();
-              _vibrationTimer?.cancel();
-              Vibration.cancel();
-              _isDangerAlertVisible = false;
-              Navigator.pop(context);
-
-              // 🧭 Find a safe destination point outside the danger zone
-              const buffer = 0.0015; // ~150m offset (tune as needed)
-              final random = Random();
-              final angle = random.nextDouble() * 2 * pi;
-
-              final safeLat = zoneCenter.latitude + (zoneRadius / 111320.0 + buffer) * cos(angle);
-              final safeLng = zoneCenter.longitude + (zoneRadius / (111320.0 * cos(zoneCenter.latitude * pi / 180))) * sin(angle);
-              final safePoint = LatLng(safeLat, safeLng);
-
-              // 🔁 Request Flask safe route: from current position → safe point
-              _drawFlaskSafeRoute(userPos, safePoint);
-            },
+            borderRadius: BorderRadius.all(Radius.circular(18)),
           ),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.close, color: Colors.black87),
-            label: const Text("Stay Here"),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.black26),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    size: 48, color: Color(0xFF2EB872)),
+                const SizedBox(height: 10),
+                Text(
+                  "You’re in a Monitored Area",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.teal.shade800,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 20,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF3A4A43),
+                    fontSize: 16,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Divider(thickness: 1.2, color: Color(0xFFB7E2C1)),
+                const SizedBox(height: 10),
+                const Text(
+                  "Would you like to take a safer route outside this area?",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF4E6B60),
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton.icon(
+                      icon:
+                      const Icon(Icons.directions_walk, color: Colors.white),
+                      label: const Text("Find Safer Route"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2EB872),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onPressed: () {
+                        _isDangerAlertVisible = false;
+                        Navigator.pop(context);
+
+                        // ✅ Generate safe point outside the zone
+                        final safePoint =
+                        _generateSafePoint(zoneCenter, zoneRadius);
+
+                        debugPrint(
+                            "🧭 Safe Point: ${safePoint.latitude}, ${safePoint.longitude}");
+
+                        _drawFlaskSafeRoute(userPos, safePoint);
+                      },
+                    ),
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFF7B8F84)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onPressed: () {
+                        _isDangerAlertVisible = false;
+                        Navigator.pop(context);
+                      },
+                      child: const Text(
+                        "Stay Here",
+                        style: TextStyle(
+                          color: Color(0xFF4E6B60),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            onPressed: () {
-              _dangerPlayer.stop();
-              _vibrationTimer?.cancel();
-              Vibration.cancel();
-              _isDangerAlertVisible = false;
-              Navigator.pop(context);
-            },
           ),
-        ],
+        ),
       ),
     );
   }
@@ -279,25 +339,34 @@ class _MapsLocationState extends State<MapsLocation> {
         body: body,
       );
 
+      debugPrint("📡 Flask response: ${res.statusCode}");
+
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
-        if (data["safe_route"] != null) {
-          final route = (data["safe_route"] as List)
-              .map((p) => LatLng(p[0].toDouble(), p[1].toDouble()))
-              .toList();
+
+        if (data["route_analysis"] != null) {
+          final routePoints = <LatLng>[];
+          for (final p in data["route_analysis"]) {
+            routePoints.add(LatLng(p["lat"], p["lng"]));
+          }
 
           setState(() {
             _polylines = {
               Polyline(
                 polylineId: const PolylineId("safe_route"),
-                color: Colors.green,
+                color: Colors.teal,
                 width: 6,
-                points: route,
+                points: routePoints,
               ),
             };
           });
-          _moveCameraToBounds(route);
+
+          _moveCameraToBounds(routePoints);
+        } else {
+          debugPrint("⚠️ No route_analysis returned from Flask");
         }
+      } else {
+        debugPrint("❌ Flask error: ${res.body}");
       }
     } catch (e) {
       debugPrint("Flask safe route error: $e");
@@ -306,14 +375,15 @@ class _MapsLocationState extends State<MapsLocation> {
 
   Future<void> _moveCameraToBounds(List<LatLng> points) async {
     if (_mapController == null || points.isEmpty) return;
+
     double minLat = points.first.latitude, maxLat = points.first.latitude;
     double minLng = points.first.longitude, maxLng = points.first.longitude;
 
     for (var p in points) {
-      if (p.latitude < minLat) minLat = p.latitude;
-      if (p.latitude > maxLat) maxLat = p.latitude;
-      if (p.longitude < minLng) minLng = p.longitude;
-      if (p.longitude > maxLng) maxLng = p.longitude;
+      minLat = min(minLat, p.latitude);
+      maxLat = max(maxLat, p.latitude);
+      minLng = min(minLng, p.longitude);
+      maxLng = max(maxLng, p.longitude);
     }
 
     LatLngBounds bounds =
@@ -330,13 +400,14 @@ class _MapsLocationState extends State<MapsLocation> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("JuanTap Safe Navigation"),
-        backgroundColor: Colors.redAccent.shade100,
+        backgroundColor: Colors.teal.shade300,
       ),
       body: (!_isPermissionGranted || _userPosition == null)
           ? const Center(child: CircularProgressIndicator())
           : GoogleMap(
         onMapCreated: _onMapCreated,
-        initialCameraPosition: CameraPosition(target: _userPosition!, zoom: 17),
+        initialCameraPosition:
+        CameraPosition(target: _userPosition!, zoom: 17),
         markers: _markers,
         circles: _circles,
         polylines: _polylines,
