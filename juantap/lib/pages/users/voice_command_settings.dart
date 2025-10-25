@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:juantap/pages/users/sos_service.dart';
 
 class VoiceCommandSettings extends StatefulWidget {
@@ -13,192 +14,259 @@ class VoiceCommandSettings extends StatefulWidget {
 
 class _VoiceCommandSettingsState extends State<VoiceCommandSettings> {
   bool _isVoiceCommandEnabled = false;
-  bool _silentMode = false; // Silent SOS mode
-  String _keyword = "help"; // default keyword
+  bool _silentMode = false;
+  String _keyword = "help";
   late stt.SpeechToText _speech;
+  bool _initializing = true;
+  bool _isListening = false;
 
   @override
   void initState() {
     super.initState();
     _speech = stt.SpeechToText();
-    _loadKeyword();
+    _loadSettings();
   }
 
-  /// Load keyword & silent mode
-  Future<void> _loadKeyword() async {
+  Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _keyword = prefs.getString("voice_keyword") ?? "help";
-      _silentMode = prefs.getBool("silent_mode") ?? false;
-    });
-  }
-
-  /// Save keyword
-  Future<void> _saveKeyword(String newKeyword) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("voice_keyword", newKeyword);
-    setState(() {
-      _keyword = newKeyword;
-    });
-  }
-
-  /// Save silent mode
-  Future<void> _saveSilentMode(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool("silent_mode", value);
-    setState(() {
-      _silentMode = value;
-    });
-  }
-
-  /// Toggle voice command
-  Future<void> _toggleVoiceCommand(bool value) async {
-    setState(() {
-      _isVoiceCommandEnabled = value;
-    });
-
-    final service = FlutterBackgroundService();
-
+    _keyword = prefs.getString("voice_keyword") ?? "help";
+    _silentMode = prefs.getBool("silent_mode") ?? false;
+    _isVoiceCommandEnabled = prefs.getBool("voice_command_enabled") ?? false;
+    setState(() {});
     if (_isVoiceCommandEnabled) {
-      try {
-        bool available = await _speech.initialize(
-          onError: (err) => print("⚠️ Speech error: $err"),
-          onStatus: (status) => print("ℹ️ Speech status: $status"),
-        );
-        if (available) {
-          // service.startService(); // ❌ disable background for now (avoid crash)
-          _startListening();
-        } else {
-          print("⚠️ Speech recognition not available (permission denied?)");
-          setState(() => _isVoiceCommandEnabled = false);
-        }
-      } catch (e) {
-        print("⚠️ Exception initializing speech: $e");
-        setState(() => _isVoiceCommandEnabled = false);
-      }
-    } else {
-      try {
-        await _speech.stop();
-      } catch (_) {}
-      service.invoke("stopService");
+      await _enableVoiceListening();
     }
+    _initializing = false;
+    setState(() {});
   }
 
-  /// Start listening for keyword
+  Future<void> _saveVoiceCommandEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool("voice_command_enabled", value);
+  }
+
+  Future<bool> _checkAndRequestMicPermission() async {
+    final status = await Permission.microphone.status;
+    if (status.isGranted) return true;
+    final result = await Permission.microphone.request();
+    if (result.isGranted) return true;
+
+    if (result.isPermanentlyDenied) {
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text("Microphone Permission Required"),
+          content: const Text(
+              "Please allow microphone access in your app settings to enable voice commands."),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel")),
+            ElevatedButton(
+                onPressed: () {
+                  openAppSettings();
+                  Navigator.pop(context);
+                },
+                child: const Text("Open Settings")),
+          ],
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("🎤 Microphone permission denied."),
+        backgroundColor: Colors.redAccent,
+      ));
+    }
+    return false;
+  }
+
+  /// Called when the user toggles ON
+  Future<void> _enableVoiceListening() async {
+    final hasPermission = await _checkAndRequestMicPermission();
+    if (!hasPermission) {
+      setState(() => _isVoiceCommandEnabled = false);
+      await _saveVoiceCommandEnabled(false);
+      return;
+    }
+
+    bool available = false;
+    try {
+      available = await _speech.initialize(
+        onError: (err) => print("⚠️ Speech error: $err"),
+        onStatus: (status) {
+          print("ℹ️ Speech status: $status");
+          if (status == "notListening" && _isVoiceCommandEnabled) {
+            // Auto-relisten if active
+            Future.delayed(const Duration(seconds: 1), () {
+              if (!_isListening && _isVoiceCommandEnabled) _startListening();
+            });
+          }
+        },
+      );
+    } catch (e) {
+      print("⚠️ Speech init exception: $e");
+    }
+
+    if (!available) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("⚠️ Voice recognition not available."),
+        backgroundColor: Colors.redAccent,
+      ));
+      setState(() => _isVoiceCommandEnabled = false);
+      await _saveVoiceCommandEnabled(false);
+      return;
+    }
+
+    setState(() {
+      _isVoiceCommandEnabled = true;
+    });
+    await _saveVoiceCommandEnabled(true);
+    _startListening();
+  }
+
   void _startListening() {
     try {
+      _isListening = true;
+
+      // ✅ Start the listening session
       _speech.listen(
+        listenMode: stt.ListenMode.dictation, // Option B: free-form mode
+        pauseFor: const Duration(seconds: 10),
+        listenFor: const Duration(minutes: 5),
+        partialResults: true,
         onResult: (result) {
-          String spoken = result.recognizedWords.toLowerCase();
+          final spoken = result.recognizedWords.toLowerCase();
           print("🎤 Heard: $spoken");
 
           if (spoken.contains(_keyword.toLowerCase())) {
             _triggerSOS();
           }
         },
-        listenFor: const Duration(minutes: 5),
-        pauseFor: const Duration(seconds: 5),
-        partialResults: true,
       );
+
+      // ✅ Add a watchdog to auto-restart if listening stops unexpectedly
+      _speech.statusListener = (status) {
+        print("ℹ️ Speech status: $status");
+        if (status == "notListening" && _isVoiceCommandEnabled) {
+          Future.delayed(const Duration(seconds: 1), () {
+            if (_isVoiceCommandEnabled) _startListening();
+          });
+        }
+      };
+
+      _speech.errorListener = (error) {
+        print("❌ Speech error: ${error.errorMsg}");
+        if (error.errorMsg == "error_no_match" ||
+            error.errorMsg == "error_speech_timeout") {
+          Future.delayed(const Duration(seconds: 1), () {
+            if (_isVoiceCommandEnabled) _startListening();
+          });
+        }
+      };
     } catch (e) {
-      print("⚠️ Error starting listening: $e");
+      print("⚠️ Start listen error: $e");
     }
   }
 
-  /// SOS Trigger
+  Future<void> _disableVoiceListening() async {
+    final service = FlutterBackgroundService();
+    try {
+      await _speech.stop();
+    } catch (_) {}
+    service.invoke("stopService");
+    _isListening = false;
+    setState(() => _isVoiceCommandEnabled = false);
+    await _saveVoiceCommandEnabled(false);
+  }
+
   Future<void> _triggerSOS() async {
     await SOSService.sendSosAlert();
-
     if (!_silentMode && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('🚨 SOS sent successfully by voice ($_keyword)'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('🚨 SOS sent successfully by voice ($_keyword)'),
+        backgroundColor: Colors.redAccent,
+      ));
     }
-
-    print("🚨 SOS TRIGGERED by keyword: $_keyword (silentMode=$_silentMode)");
-
-    // 👉 Navigate to HomePage after SOS is triggered
     if (mounted) {
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        '/home', // Make sure this route is registered in your MaterialApp routes
-            (route) => false, // Clear backstack so it goes directly to home
-      );
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
     }
   }
 
-  /// Record keyword
+  Future<void> _saveSilentMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool("silent_mode", value);
+    setState(() => _silentMode = value);
+  }
+
+  Future<void> _saveKeyword(String newKeyword) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("voice_keyword", newKeyword);
+    setState(() => _keyword = newKeyword);
+  }
+
   void _showChangeKeywordDialog() {
     showDialog(
       context: context,
       builder: (context) {
         bool isRecording = false;
         String detectedWord = "";
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text("Set Voice Keyword"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(detectedWord.isEmpty
-                      ? "Press record and say your keyword"
-                      : "Detected: $detectedWord"),
-                  const SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: () async {
-                      if (!isRecording) {
-                        try {
-                          bool available = await _speech.initialize();
-                          if (available) {
-                            setState(() => isRecording = true);
-                            _speech.listen(onResult: (result) {
-                              setState(() {
-                                detectedWord =
-                                    result.recognizedWords.toLowerCase();
-                              });
-                            });
-                          }
-                        } catch (e) {
-                          print("⚠️ Error recording keyword: $e");
-                        }
-                      } else {
-                        await _speech.stop();
-                        setState(() => isRecording = false);
-                      }
-                    },
-                    child: Text(
-                        isRecording ? "Stop Recording" : "Record Keyword"),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("Cancel"),
-                ),
+        return StatefulBuilder(builder: (context, setState) {
+          return AlertDialog(
+            title: const Text("Set Voice Keyword"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(detectedWord.isEmpty
+                    ? "Press record and say your keyword"
+                    : "Detected: $detectedWord"),
+                const SizedBox(height: 10),
                 ElevatedButton(
-                  onPressed: () {
-                    if (detectedWord.isNotEmpty) {
-                      _saveKeyword(detectedWord);
+                  onPressed: () async {
+                    if (!isRecording) {
+                      bool available = await _speech.initialize();
+                      if (available) {
+                        setState(() => isRecording = true);
+                        _speech.listen(onResult: (result) {
+                          setState(() {
+                            detectedWord = result.recognizedWords.toLowerCase();
+                          });
+                        });
+                      }
+                    } else {
+                      await _speech.stop();
+                      setState(() => isRecording = false);
                     }
-                    Navigator.pop(context);
                   },
-                  child: const Text("Save"),
+                  child: Text(
+                      isRecording ? "Stop Recording" : "Record Keyword"),
                 ),
               ],
-            );
-          },
-        );
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancel")),
+              ElevatedButton(
+                  onPressed: () {
+                    if (detectedWord.isNotEmpty) _saveKeyword(detectedWord);
+                    Navigator.pop(context);
+                  },
+                  child: const Text("Save")),
+            ],
+          );
+        });
       },
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_initializing) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text("Voice Command Settings")),
       body: Padding(
@@ -209,7 +277,14 @@ class _VoiceCommandSettingsState extends State<VoiceCommandSettings> {
             SwitchListTile(
               title: const Text("Enable Voice Command"),
               value: _isVoiceCommandEnabled,
-              onChanged: _toggleVoiceCommand,
+              onChanged: (val) async {
+                if (val) {
+                  await _enableVoiceListening();
+                } else {
+                  await _disableVoiceListening();
+                }
+                setState(() {});
+              },
             ),
             SwitchListTile(
               title: const Text("Silent SOS Mode"),
@@ -219,21 +294,25 @@ class _VoiceCommandSettingsState extends State<VoiceCommandSettings> {
               onChanged: _saveSilentMode,
             ),
             const SizedBox(height: 20),
-            Text("Current Keyword: $_keyword",
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(
+              "Current Keyword: $_keyword",
+              style:
+              const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
             ElevatedButton(
               onPressed: _showChangeKeywordDialog,
               child: const Text("Change Keyword"),
             ),
             const SizedBox(height: 20),
             Text(
-              _isVoiceCommandEnabled ? "Listening..." : "Not listening",
+              _isVoiceCommandEnabled
+                  ? (_isListening ? "🎙️ Listening..." : "🔄 Initializing...")
+                  : "❌ Not listening",
               style: TextStyle(
                 color: _isVoiceCommandEnabled ? Colors.green : Colors.red,
                 fontWeight: FontWeight.bold,
               ),
-            )
+            ),
           ],
         ),
       ),

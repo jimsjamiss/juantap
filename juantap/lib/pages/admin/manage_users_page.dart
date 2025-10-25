@@ -83,6 +83,7 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
     }
   }
 
+  // ✅ Create Responder Dialog
   Future<void> _showAddResponderDialog() async {
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
@@ -233,13 +234,31 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                "Manage Responder Accounts",
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF084C41),
-                ),
+              // 🔹 Header with button
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "Manage Responder Accounts",
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF084C41),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.person_add_alt_1, color: Colors.white),
+                    label: const Text("Create Responder"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E88E5),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: _showAddResponderDialog,
+                  ),
+                ],
               ),
               const SizedBox(height: 20),
               _searchFilterBar(),

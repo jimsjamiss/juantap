@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:juantap/pages/users/sos_service.dart'; // ✅ for SOS alert
 
 class CheckInPage extends StatefulWidget {
   @override
@@ -8,6 +9,8 @@ class CheckInPage extends StatefulWidget {
 
 class _CheckInPageState extends State<CheckInPage> {
   Timer? _safetyPromptTimer;
+  Timer? _responseTimer; // ✅ timer for user's response timeout
+  bool _isFollowUpDialogVisible = false; // ✅ prevents stacked dialogs
 
   void _startCheckInProcess() {
     _showActivateCheckInDialog();
@@ -36,7 +39,7 @@ class _CheckInPageState extends State<CheckInPage> {
         iconColor: Colors.green,
         title: 'Please read carefully',
         content:
-        "You've successfully checked in.\nWe're actively monitoring your status for your safety.\n\nWe’ll prompt you every 5 minutes. If there’s no reply, we’ll alert your contacts.",
+        "You've successfully checked in.\nWe're actively monitoring your status for your safety.\n\nWe’ll prompt you every 5 minutes. If there’s no reply within 1 minute, we’ll alert your contacts.",
         buttonText: 'Confirm',
         onPressed: () {
           Navigator.pop(context);
@@ -46,42 +49,95 @@ class _CheckInPageState extends State<CheckInPage> {
     );
   }
 
-  void _showFollowUpCheckIn() {
-    showDialog(
+  /// ✅ Show the follow-up prompt safely (one at a time)
+  void _showFollowUpCheckIn() async {
+    if (_isFollowUpDialogVisible) return; // prevent stacking
+    _isFollowUpDialogVisible = true;
+
+    // stop any pending SOS countdown
+    _responseTimer?.cancel();
+
+    // Show dialog
+    await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _buildModalDialog(
-        image: 'assets/images/checkIn_button.png',
-        title: 'Are you safe right now?\nPlease confirm your status.',
-        buttonText: 'Yes, I\'m safe',
-        onPressed: () {
-          Navigator.pop(context);
-          _restartSafetyPromptTimer();
-        },
-      ),
+      builder: (dialogContext) {
+        // Start countdown for SOS alert
+        _responseTimer = Timer(const Duration(minutes: 1), () async {
+          // user didn’t respond within 1 minute
+          if (Navigator.of(dialogContext).canPop()) {
+            Navigator.of(dialogContext).pop();
+          }
+          _isFollowUpDialogVisible = false;
+          await _triggerSOSAlert();
+        });
+
+        return _buildModalDialog(
+          image: 'assets/images/checkIn_button.png',
+          title: 'Are you safe right now?\nPlease confirm your status.',
+          buttonText: 'Yes, I\'m safe',
+          onPressed: () {
+            // user confirmed safety
+            _responseTimer?.cancel();
+            if (Navigator.of(dialogContext).canPop()) {
+              Navigator.of(dialogContext).pop();
+            }
+            _isFollowUpDialogVisible = false;
+            _restartSafetyPromptTimer();
+          },
+        );
+      },
     );
+
+    _isFollowUpDialogVisible = false;
   }
 
+  /// ✅ Send SOS if no response
+  Future<void> _triggerSOSAlert() async {
+    try {
+      await SOSService.sendSosAlert(); // your existing SOS function
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+                '🚨 No response detected. SOS alert sent to your contacts!'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("❌ Error sending SOS: $e");
+    }
+  }
+
+  /// ✅ Start repeating timer for follow-ups (every 5 min)
   void _startSafetyPromptTimer() {
     _safetyPromptTimer?.cancel();
-    _safetyPromptTimer = Timer.periodic(Duration(minutes: 5), (timer) {
-      _showFollowUpCheckIn();
+    _safetyPromptTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      if (mounted) _showFollowUpCheckIn();
     });
   }
 
+  /// ✅ Restart after user confirms
   void _restartSafetyPromptTimer() {
     _safetyPromptTimer?.cancel();
-    _safetyPromptTimer = Timer(Duration(minutes: 5), () {
-      _showFollowUpCheckIn();
+    _safetyPromptTimer = Timer(const Duration(minutes: 5), () {
+      if (mounted) _showFollowUpCheckIn();
     });
   }
 
   @override
   void dispose() {
     _safetyPromptTimer?.cancel();
+    _responseTimer?.cancel();
     super.dispose();
   }
 
+  // ===================================================
+  //  UI Helper for reusable modal dialogs
+  // ===================================================
   Widget _buildModalDialog({
     IconData? icon,
     Color? iconColor,
@@ -92,7 +148,7 @@ class _CheckInPageState extends State<CheckInPage> {
     required VoidCallback onPressed,
   }) {
     return AlertDialog(
-      backgroundColor: Color(0xFFEFFEF5),
+      backgroundColor: const Color(0xFFEFFEF5),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Column(
         children: [
@@ -100,22 +156,22 @@ class _CheckInPageState extends State<CheckInPage> {
             Icon(icon, size: 50, color: iconColor)
           else if (image != null)
             Image.asset(image, height: 60),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           Text(
             title,
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
               color: Colors.black87,
               fontWeight: FontWeight.bold,
               fontSize: 16,
             ),
           ),
           if (content != null) ...[
-            SizedBox(height: 12),
+            const SizedBox(height: 12),
             Text(
               content,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14),
+              style: const TextStyle(fontSize: 14),
             ),
           ],
         ],
@@ -125,15 +181,16 @@ class _CheckInPageState extends State<CheckInPage> {
           child: GestureDetector(
             onTap: onPressed,
             child: Container(
-              margin: EdgeInsets.symmetric(vertical: 10),
-              padding: EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              padding:
+              const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
               decoration: BoxDecoration(
                 color: Colors.green.shade800,
                 borderRadius: BorderRadius.circular(30),
               ),
               child: Text(
                 buttonText,
-                style: TextStyle(color: Colors.white),
+                style: const TextStyle(color: Colors.white),
               ),
             ),
           ),
@@ -142,6 +199,9 @@ class _CheckInPageState extends State<CheckInPage> {
     );
   }
 
+  // ===================================================
+  //  MAIN UI
+  // ===================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -153,8 +213,9 @@ class _CheckInPageState extends State<CheckInPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Image.asset('assets/images/checkIn_button.png', height: 100),
-              SizedBox(height: 20),
-              Text('Tap to Check-In', style: TextStyle(color: Colors.white)),
+              const SizedBox(height: 20),
+              const Text('Tap to Check-In',
+                  style: TextStyle(color: Colors.white)),
             ],
           ),
         ),
@@ -162,15 +223,16 @@ class _CheckInPageState extends State<CheckInPage> {
       bottomNavigationBar: BottomAppBar(
         color: Colors.black,
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 30, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 10),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              Icon(Icons.map, color: Colors.white),
-              Icon(Icons.contacts, color: Colors.white),
+              const Icon(Icons.map, color: Colors.white),
+              const Icon(Icons.contacts, color: Colors.white),
               GestureDetector(
                 onTap: _startCheckInProcess,
-                child: Image.asset('assets/images/checkIn_button.png', height: 50),
+                child:
+                Image.asset('assets/images/checkIn_button.png', height: 50),
               ),
             ],
           ),

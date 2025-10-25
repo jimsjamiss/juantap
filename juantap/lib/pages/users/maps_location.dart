@@ -34,8 +34,8 @@ class _MapsLocationState extends State<MapsLocation> {
   bool _isDangerAlertVisible = false;
   bool _followUser = true;
 
-  //final String _flaskUrl = "https://juantap-flask.onrender.com/ml-safe-route";
-  final String _flaskUrl = "http://192.168.1.3:5000/ml-safe-route";
+  final String _flaskUrl = "https://juantap.onrender.com/ml-safe-route";
+  // final String _flaskUrl = "http://192.168.1.3:5000/ml-safe-route";
 
   @override
   void initState() {

@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:url_launcher/url_launcher.dart';
+
+// ✅ imports
+import 'uploaded_guides_popup.dart';
+import 'upload_guide_button.dart'; // your separated button file
 
 class DashboardOverview extends StatefulWidget {
   const DashboardOverview({super.key});
@@ -23,7 +26,7 @@ class _DashboardOverviewState extends State<DashboardOverview> {
   int _totalZones = 0;
   int _reportsThisMonth = 0;
   int _totalGuides = 0;
-  bool _isHovered = false; // ✅ for hover animation
+  bool _isHovered = false; // hover animation
 
   @override
   void initState() {
@@ -65,211 +68,6 @@ class _DashboardOverviewState extends State<DashboardOverview> {
     _guidesRef.onValue.listen((e) => setState(() => _totalGuides = e.snapshot.children.length));
   }
 
-  // ✅ Uploaded Guides Popup
-  void _showUploadedGuidesPopup() async {
-    final snapshot = await _guidesRef.get();
-    final guides = snapshot.children.toList();
-
-    showGeneralDialog(
-      context: context,
-      barrierLabel: "Close",
-      barrierDismissible: true,
-      barrierColor: Colors.black38,
-      transitionDuration: const Duration(milliseconds: 300),
-      pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
-      transitionBuilder: (context, animation, _, __) {
-        return Transform.scale(
-          scale: Curves.easeOutBack.transform(animation.value),
-          child: Opacity(
-            opacity: animation.value,
-            child: AlertDialog(
-              backgroundColor: const Color(0xFFF8FFF8),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-              title: Row(
-                children: const [
-                  Icon(Icons.menu_book_rounded, color: Color(0xFF2EB872)),
-                  SizedBox(width: 8),
-                  Text(
-                    "Uploaded Self-Defense Guides",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0E4D35),
-                      fontSize: 17,
-                    ),
-                  ),
-                ],
-              ),
-              content: guides.isEmpty
-                  ? const Text("No uploaded guides found.", style: TextStyle(color: Colors.grey))
-                  : SizedBox(
-                width: 420,
-                height: 320,
-                child: ListView.builder(
-                  itemCount: guides.length,
-                  itemBuilder: (context, index) {
-                    final id = guides[index].key!;
-                    final link = guides[index].child('link').value?.toString() ?? 'No link';
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOut,
-                      margin: const EdgeInsets.symmetric(vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.green.withOpacity(0.08),
-                            blurRadius: 6,
-                            offset: const Offset(2, 3),
-                          ),
-                        ],
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        leading: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: link == 'No link'
-                                ? Colors.red.withOpacity(0.12)
-                                : const Color(0xFFE8F5E9),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.play_arrow_rounded,
-                            color: link == 'No link'
-                                ? Colors.redAccent
-                                : const Color(0xFF11998E),
-                            size: 28,
-                          ),
-                        ),
-                        title: Text(
-                          link == 'No link' ? 'Invalid or Empty Link' : link,
-                          style: TextStyle(
-                            color: link == 'No link'
-                                ? Colors.redAccent
-                                : const Color(0xFF0E4D35),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded,
-                              color: Colors.redAccent),
-                          onPressed: () => _showConfirmDeleteDialog(id),
-                        ),
-                        onTap: link != 'No link'
-                            ? () async {
-                          final uri = Uri.parse(link);
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri,
-                                mode: LaunchMode.externalApplication);
-                          }
-                        }
-                            : null,
-                      ),
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("Close", style: TextStyle(color: Colors.grey)),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // ✅ Confirm Delete Dialog
-  void _showConfirmDeleteDialog(String id) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text("Delete Guide?",
-            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.redAccent)),
-        content: const Text(
-          "Are you sure you want to delete this self-defense guide?",
-          style: TextStyle(color: Colors.black87),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              await _guidesRef.child(id).remove();
-              Navigator.pop(context);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("🗑️ Guide deleted successfully")),
-              );
-            },
-            child: const Text("Delete"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ✅ Upload Guide Dialog
-  void _showUploadGuideDialog() {
-    final TextEditingController _linkController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Upload Self-Defense Guide",
-            style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0E4D35))),
-        content: TextField(
-          controller: _linkController,
-          decoration: InputDecoration(
-            hintText: "Enter YouTube link...",
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel", style: TextStyle(color: Colors.grey))),
-          ElevatedButton.icon(
-            onPressed: () async {
-              final link = _linkController.text.trim();
-              if (link.isEmpty || !link.contains("youtube.com")) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text("Please enter a valid YouTube link")));
-                return;
-              }
-
-              final id = _guidesRef.push().key!;
-              await _guidesRef.child(id).set({'link': link, 'uploaded_at': DateTime.now().toIso8601String()});
-
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(const SnackBar(content: Text("✅ Guide uploaded successfully")));
-            },
-            icon: const Icon(Icons.cloud_upload_rounded),
-            label: const Text("Upload"),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF38EF7D), foregroundColor: Colors.white),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ✅ UI Layout
   @override
   Widget build(BuildContext context) {
@@ -287,17 +85,8 @@ class _DashboardOverviewState extends State<DashboardOverview> {
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             const Text("Dashboard Overview",
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF084C41))),
-            ElevatedButton.icon(
-              onPressed: _showUploadGuideDialog,
-              icon: const Icon(Icons.video_library_rounded, size: 20),
-              label: const Text("Upload Guide"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1E88E5),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
+            // ✅ Upload Guide button moved here (modular)
+            UploadGuideButton(guidesRef: FirebaseDatabase.instance.ref('self_defense_guides')),
           ]),
           const SizedBox(height: 24),
 
@@ -305,17 +94,32 @@ class _DashboardOverviewState extends State<DashboardOverview> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(children: [
-              _MiniStatCard(label: 'Total Users', value: _totalUsers, icon: Icons.people, gradient: const LinearGradient(colors: [Color(0xFF4FACFE), Color(0xFF00F2FE)])),
+              _MiniStatCard(
+                  label: 'Total Users',
+                  value: _totalUsers,
+                  icon: Icons.people,
+                  gradient: const LinearGradient(colors: [Color(0xFF4FACFE), Color(0xFF00F2FE)])),
               const SizedBox(width: 16),
-              _MiniStatCard(label: 'Total SOS Alerts', value: _totalSOS, icon: Icons.sos, gradient: const LinearGradient(colors: [Color(0xFF56CCF2), Color(0xFF2F80ED)])),
+              _MiniStatCard(
+                  label: 'Total SOS Alerts',
+                  value: _totalSOS,
+                  icon: Icons.sos,
+                  gradient: const LinearGradient(colors: [Color(0xFF56CCF2), Color(0xFF2F80ED)])),
               const SizedBox(width: 16),
-              _MiniStatCard(label: 'Danger Zones', value: _totalZones, icon: Icons.warning_amber_rounded, gradient: const LinearGradient(colors: [Color(0xFF38EF7D), Color(0xFF11998E)])),
+              _MiniStatCard(
+                  label: 'Danger Zones',
+                  value: _totalZones,
+                  icon: Icons.warning_amber_rounded,
+                  gradient: const LinearGradient(colors: [Color(0xFF38EF7D), Color(0xFF11998E)])),
               const SizedBox(width: 16),
-              _MiniStatCard(label: 'Reports (This Month)', value: _reportsThisMonth, icon: Icons.assignment_turned_in, gradient: const LinearGradient(colors: [Color(0xFFB993D6), Color(0xFF8CA6DB)])),
+              _MiniStatCard(
+                  label: 'Reports (This Month)',
+                  value: _reportsThisMonth,
+                  icon: Icons.assignment_turned_in,
+                  gradient: const LinearGradient(colors: [Color(0xFFB993D6), Color(0xFF8CA6DB)])),
               const SizedBox(width: 16),
 
-              // ✅ Hover-Enabled Uploaded Guides Card
-              // ✅ Hover-Enabled Uploaded Guides Card with Glow
+              // ✅ Uploaded Guides Card (calls external popup)
               MouseRegion(
                 onEnter: (_) => setState(() => _isHovered = true),
                 onExit: (_) => setState(() => _isHovered = false),
@@ -326,7 +130,7 @@ class _DashboardOverviewState extends State<DashboardOverview> {
                     boxShadow: _isHovered
                         ? [
                       BoxShadow(
-                        color: Colors.white.withOpacity(0.6), // 💫 soft glow
+                        color: Colors.white.withOpacity(0.6),
                         blurRadius: 25,
                         spreadRadius: 1,
                       ),
@@ -339,7 +143,7 @@ class _DashboardOverviewState extends State<DashboardOverview> {
                         : [],
                   ),
                   child: GestureDetector(
-                    onTap: _showUploadedGuidesPopup,
+                    onTap: () => UploadedGuidesPopup.show(context, _guidesRef),
                     child: _MiniStatCard(
                       label: 'Uploaded Guides',
                       value: _totalGuides,
@@ -354,7 +158,6 @@ class _DashboardOverviewState extends State<DashboardOverview> {
                   ),
                 ),
               ),
-
             ]),
           ),
           const SizedBox(height: 32),
@@ -446,7 +249,7 @@ class _MiniStatCardState extends State<_MiniStatCard> with SingleTickerProviderS
   }
 }
 
-// ✅ Chart Section
+// ✅ Chart Section (unchanged)
 class _ChartSection extends StatelessWidget {
   const _ChartSection({super.key});
 
@@ -470,7 +273,7 @@ class _ChartSection extends StatelessWidget {
   }
 }
 
-// ✅ Animated Line Chart Section
+// ✅ Animated Line Chart Section (unchanged)
 class _AnimatedLineChartContainer extends StatefulWidget {
   const _AnimatedLineChartContainer({super.key});
 
@@ -478,7 +281,8 @@ class _AnimatedLineChartContainer extends StatefulWidget {
   State<_AnimatedLineChartContainer> createState() => _AnimatedLineChartContainerState();
 }
 
-class _AnimatedLineChartContainerState extends State<_AnimatedLineChartContainer> with SingleTickerProviderStateMixin {
+class _AnimatedLineChartContainerState extends State<_AnimatedLineChartContainer>
+    with SingleTickerProviderStateMixin {
   final DatabaseReference _reportsRef = FirebaseDatabase.instance.ref('responder_reports');
   List<int> _monthlyCounts = List.filled(12, 0);
   bool _loading = true;
@@ -619,8 +423,8 @@ class _GradientLineChartPainter extends CustomPainter {
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
     );
-    final fillPaint =
-    Paint()..shader = fillGradient.createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+    final fillPaint = Paint()
+      ..shader = fillGradient.createShader(Rect.fromLTWH(0, 0, size.width, size.height))
       ..style = PaintingStyle.fill;
 
     final fillPath = Path.from(path)
@@ -642,7 +446,8 @@ class _GradientLineChartPainter extends CustomPainter {
     for (int i = 0; i < months.length; i++) {
       final x = origin.dx + i * stepX;
       final tp = TextPainter(
-        text: TextSpan(text: months[i], style: const TextStyle(fontSize: 11, color: Color(0xFF0E4D35))),
+        text:
+        TextSpan(text: months[i], style: const TextStyle(fontSize: 11, color: Color(0xFF0E4D35))),
         textDirection: TextDirection.ltr,
       );
       tp.layout();
@@ -651,5 +456,6 @@ class _GradientLineChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _GradientLineChartPainter oldDelegate) => oldDelegate.values != values;
+  bool shouldRepaint(covariant _GradientLineChartPainter oldDelegate) =>
+      oldDelegate.values != values;
 }

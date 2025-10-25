@@ -1,170 +1,134 @@
-// 📦 Full updated IncidentReportsPage — with WebLiveMap showing pinpoint marker
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import '../admin/web_live_map.dart';
-//import 'web_live_map.dart'; // ✅ Your custom map widget
 
-class IncidentReportsPage extends StatefulWidget {
-  const IncidentReportsPage({super.key});
+class IncidentReportsResponder extends StatefulWidget {
+  const IncidentReportsResponder({super.key});
 
   @override
-  State<IncidentReportsPage> createState() => _IncidentReportsPageState();
+  State<IncidentReportsResponder> createState() =>
+      _IncidentReportsResponderState();
 }
 
-class _IncidentReportsPageState extends State<IncidentReportsPage> {
-  late final DatabaseReference _reportsRef;
-  List<_ReportRow> _rows = [];
-  bool _loading = true;
-  DateTimeRange? _range;
-  String _statusFilter = 'All';
+class _IncidentReportsResponderState extends State<IncidentReportsResponder> {
+  final DatabaseReference _reportsRef =
+  FirebaseDatabase.instance.ref('responder_reports');
+  final User? _currentUser = FirebaseAuth.instance.currentUser;
+
+  List<Map<String, dynamic>> _reports = [];
+  List<Map<String, dynamic>> _filteredReports = [];
+
+  bool _isLoading = true;
+
+  String _selectedType = 'All';
+  String _selectedStatus = 'All';
+
+  List<String> _incidentTypes = ['All'];
+  final List<String> _statusOptions = ['All', 'Resolved', 'Not Resolved'];
 
   @override
   void initState() {
     super.initState();
-    _reportsRef = FirebaseDatabase.instance.ref('responder_reports');
-    _bind();
+    _loadReports();
   }
 
-  void _bind() {
-    _reportsRef.onValue.listen((event) {
-      final tmp = <_ReportRow>[];
-      for (final responderSnapshot in event.snapshot.children) {
-        final responderId = responderSnapshot.key ?? '';
-        for (final reportSnapshot in responderSnapshot.children) {
-          final reportId = reportSnapshot.key ?? '';
-          final data = Map<String, dynamic>.from(reportSnapshot.value as Map);
-          tmp.add(_ReportRow(
-            responderId: responderId,
-            reportId: reportId,
-            date: data['date'] ?? 'Unknown',
-            time: data['time'] ?? 'Unknown',
-            description: data['description'] ?? 'No description',
-            location: data['location'] ?? 'Unknown',
-            status: data['status'] ?? 'Pending',
-            lat: (data['latitude'] != null)
-                ? (data['latitude'] as num).toDouble()
-                : null,
-            lng: (data['longitude'] != null)
-                ? (data['longitude'] as num).toDouble()
-                : null,
-          ));
-        }
-      }
-      setState(() {
-        _rows = tmp.reversed.toList();
-        _loading = false;
+  Future<void> _loadReports() async {
+    if (_currentUser == null) return;
+
+    final snapshot = await _reportsRef.child(_currentUser!.uid).get();
+    if (snapshot.exists) {
+      final data = Map<String, dynamic>.from(snapshot.value as Map);
+      final List<Map<String, dynamic>> loaded = [];
+
+      data.forEach((key, value) {
+        loaded.add({
+          'id': key,
+          ...Map<String, dynamic>.from(value),
+        });
       });
+
+      loaded.sort((a, b) => b['timestamp'].compareTo(a['timestamp']));
+
+      final uniqueTypes = loaded
+          .map((r) => (r['incidentType'] ?? 'Unknown').toString())
+          .toSet()
+          .toList()
+        ..sort();
+
+      setState(() {
+        _reports = loaded;
+        _filteredReports = List.from(loaded);
+        _incidentTypes = ['All', ...uniqueTypes];
+        _isLoading = false;
+      });
+    } else {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _applyFilters() {
+    setState(() {
+      _filteredReports = _reports.where((report) {
+        final typeMatch =
+            _selectedType == 'All' || report['incidentType'] == _selectedType;
+        final resolved =
+            (report['resolved'] ?? '').toString().toLowerCase() == "yes";
+        final statusMatch = _selectedStatus == 'All' ||
+            (_selectedStatus == 'Resolved' && resolved) ||
+            (_selectedStatus == 'Not Resolved' && !resolved);
+        return typeMatch && statusMatch;
+      }).toList();
     });
   }
 
-  List<_ReportRow> get _filtered {
-    List<_ReportRow> filtered = _rows;
-    if (_statusFilter != 'All') {
-      filtered = filtered
-          .where((r) => r.status.toLowerCase() == _statusFilter.toLowerCase())
-          .toList();
-    }
-    if (_range != null) {
-      filtered = filtered.where((r) {
-        try {
-          final dateParts = r.date.split('/');
-          if (dateParts.length == 3) {
-            final d = DateTime(
-              int.parse(dateParts[2]),
-              int.parse(dateParts[0]),
-              int.parse(dateParts[1]),
-            );
-            return d.isAfter(_range!.start) && d.isBefore(_range!.end);
-          }
-          return false;
-        } catch (_) {
-          return false;
-        }
-      }).toList();
-    }
-    return filtered;
-  }
-
-  Future<void> _pickRange() async {
-    final now = DateTime.now();
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(now.year - 2),
-      lastDate: DateTime(now.year + 1),
-    );
-    if (picked != null) setState(() => _range = picked);
-  }
-
-  Color _statusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'resolved':
-        return const Color(0xFF2EB872);
-      case 'in_progress':
-        return const Color(0xFF1E88E5);
-      default:
-        return const Color(0xFFFFA726);
+  String _formatDate(String isoString) {
+    try {
+      final dt = DateTime.parse(isoString);
+      return DateFormat('MMM d, yyyy – h:mm a').format(dt);
+    } catch (_) {
+      return "Unknown";
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFFC8F4E4),
-            Color(0xFFA7E2C9),
-            Color(0xFF7FD1AE),
-          ],
+    return Scaffold(
+      backgroundColor: const Color(0xFF2A9D8F),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF2A9D8F),
+        elevation: 0,
+        title: const Text(
+          "Incident Reports",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
+        leading: const BackButton(color: Colors.white),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : _reports.isEmpty
+          ? const Center(
+        child: Text(
+          "No incident reports yet.",
+          style: TextStyle(color: Colors.white70, fontSize: 16),
+        ),
+      )
+          : RefreshIndicator(
+        onRefresh: _loadReports,
+        color: const Color(0xFF1E8449),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Incident Reports",
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF084C41),
-              ),
-            ),
-            const SizedBox(height: 20),
-            _buildFilterBar(),
-            const SizedBox(height: 20),
+            _buildFilterSection(),
             Expanded(
-              child: Card(
-                color: const Color(0xFFFAFCFF),
-                elevation: 6,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _filtered.isEmpty
-                      ? const Center(
-                    child: Text(
-                      'No reports found for selected filter.',
-                      style: TextStyle(
-                          color: Colors.black54, fontSize: 16),
-                    ),
-                  )
-                      : ListView.builder(
-                    padding: const EdgeInsets.only(top: 8),
-                    itemCount: _filtered.length,
-                    itemBuilder: (ctx, i) {
-                      final r = _filtered[i];
-                      return _build3DReportCard(r);
-                    },
-                  ),
-                ),
+              child: ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                itemCount: _filteredReports.length,
+                itemBuilder: (context, index) {
+                  final report = _filteredReports[index];
+                  return _buildReportCard(report);
+                },
               ),
             ),
           ],
@@ -173,375 +137,266 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
     );
   }
 
-  Widget _buildFilterBar() {
+  Widget _buildFilterSection() {
     return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
+      width: double.infinity,
+      color: const Color(0xFF21867A),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ElevatedButton.icon(
-            onPressed: _pickRange,
-            icon: const Icon(Icons.date_range, color: Colors.white),
-            label: const Text(
-              'Filter by date',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
+          const Text(
+            "Filter Reports",
+            style: TextStyle(
                 color: Colors.white,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1E88E5),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30),
-              ),
-              padding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            ),
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5),
           ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: () => setState(() {
-              _range = null;
-              _statusFilter = 'All';
-            }),
-            icon: const Icon(Icons.clear),
-            label: const Text('Clear'),
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.teal),
-            onPressed: _bind,
-            tooltip: 'Refresh',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _build3DReportCard(_ReportRow r) {
-    final gradient = LinearGradient(
-      colors: [
-        _statusColor(r.status).withOpacity(0.15),
-        Colors.white.withOpacity(0.9),
-      ],
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-    );
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: _statusColor(r.status).withOpacity(0.25),
-            blurRadius: 12,
-            offset: const Offset(3, 5),
-          ),
-        ],
-      ),
-      child: ListTile(
-        contentPadding:
-        const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        onTap: () => _showReportDetails(r),
-        leading: Container(
-          height: 45,
-          width: 45,
-          decoration: BoxDecoration(
-            color: _statusColor(r.status),
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: _statusColor(r.status).withOpacity(0.4),
-                blurRadius: 6,
-                offset: const Offset(2, 3),
-              ),
-            ],
-          ),
-          child: const Icon(Icons.notes_rounded, color: Colors.white),
-        ),
-        title: Text(
-          'Report #${r.reportId.substring(0, 6)}',
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: Color(0xFF084C41),
-          ),
-        ),
-        subtitle: Text(
-          '${r.location}\n${r.date} • ${r.time}',
-          style: const TextStyle(
-            color: Colors.black87,
-            height: 1.4,
-            fontSize: 13,
-          ),
-        ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _statusColor(r.status).withOpacity(0.1),
-                border: Border.all(
-                  color: _statusColor(r.status).withOpacity(0.3),
-                ),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                r.status.toUpperCase(),
-                style: TextStyle(
-                  color: _statusColor(r.status),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            TextButton.icon(
-              icon: const Icon(Icons.map_outlined, size: 14),
-              label:
-              const Text('View Map', style: TextStyle(fontSize: 11)),
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                foregroundColor: Colors.teal.shade700,
-              ),
-              onPressed: () => _showMapDialog(r),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // 🧾 Report Details Dialog — keeps WebLiveMap and passes coordinates for pinpoint
-  void _showReportDetails(_ReportRow r) {
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        insetPadding: const EdgeInsets.all(16),
-        shape:
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Container(
-          height: 820,
-          width: 1200,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            gradient: const LinearGradient(
-              colors: [Color(0xFFF9FFF9), Color(0xFFE8FFF3)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.greenAccent.withOpacity(0.15),
-                blurRadius: 18,
-                offset: const Offset(4, 6),
-              ),
-            ],
-          ),
-          child: Row(
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ✅ Keep your existing WebLiveMap but now pass pin coordinates
               Expanded(
-                flex: 1,
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: WebLiveMap(
-                    centerLat: r.lat ?? 0,
-                    centerLng: r.lng ?? 0,
-                    markerTitle: r.location, // 👈 Add optional marker title
-                  ),
-                ),
-              ),
-
-              // 🧾 Right side info
-              Expanded(
-                flex: 1,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 40, vertical: 30),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Row(
-                        children: [
-                          Icon(Icons.assignment_rounded,
-                              color: Color(0xFF1E88E5), size: 32),
-                          SizedBox(width: 10),
-                          Text(
-                            "Report Details",
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF084C41),
-                            ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Incident Type",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 30),
-                      _infoRow('Responder ID', r.responderId),
-                      _infoRow('Report ID', r.reportId),
-                      _infoRow('Date', r.date),
-                      _infoRow('Time', r.time),
-                      _infoRow('Location', r.location),
-                      _infoRow('Description', r.description),
-                      const SizedBox(height: 30),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 10),
-                        decoration: BoxDecoration(
-                          color:
-                          _statusColor(r.status).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(40),
-                          boxShadow: [
-                            BoxShadow(
-                              color:
-                              _statusColor(r.status).withOpacity(0.3),
-                              blurRadius: 10,
-                              offset: const Offset(2, 4),
-                            ),
-                          ],
-                        ),
-                        child: Text(
-                          r.status.toUpperCase(),
-                          style: TextStyle(
-                            color: _statusColor(r.status),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                      child: Center(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            isExpanded: true,
+                            value: _selectedType,
+                            items: _incidentTypes
+                                .map((type) => DropdownMenuItem(
+                              value: type,
+                              child: Text(type,
+                                  overflow: TextOverflow.ellipsis),
+                            ))
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() => _selectedType = value!);
+                              _applyFilters();
+                            },
+                            icon: const Icon(Icons.arrow_drop_down),
                           ),
                         ),
                       ),
-                      const Spacer(),
-                      Align(
-                        alignment: Alignment.bottomRight,
-                        child: ElevatedButton.icon(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close_rounded,
-                              color: Colors.white, size: 22),
-                          label: const Text(
-                            "Close",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Status",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
                           ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1E88E5),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(40),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 30, vertical: 16),
-                            elevation: 6,
-                            shadowColor:
-                            const Color(0xFF1E88E5).withOpacity(0.4),
+                        ],
+                      ),
+                      child: Center(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            isExpanded: true,
+                            value: _selectedStatus,
+                            items: _statusOptions
+                                .map((status) => DropdownMenuItem(
+                              value: status,
+                              child: Text(status),
+                            ))
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() => _selectedStatus = value!);
+                              _applyFilters();
+                            },
+                            icon: const Icon(Icons.arrow_drop_down),
                           ),
                         ),
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportCard(Map<String, dynamic> report) {
+    final bool resolved =
+        (report['resolved'] ?? '').toString().toLowerCase() == "yes";
+    final LatLng? location = (report['latitude'] != null &&
+        report['longitude'] != null)
+        ? LatLng(report['latitude'], report['longitude'])
+        : null;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            resolved ? const Color(0xFF25C09C) : const Color(0xFFFF6B6B),
+            resolved ? const Color(0xFF2ECC71) : const Color(0xFFFF8E53),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                resolved ? Icons.check_circle : Icons.error_outline,
+                color: Colors.white,
+                size: 26,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  report['incidentType'] ?? "Unknown Type",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
                   ),
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: RichText(
-        text: TextSpan(
-          style:
-          const TextStyle(color: Colors.black87, fontSize: 16),
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
-            TextSpan(text: value.isNotEmpty ? value : '-'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showMapDialog(_ReportRow r) {
-    if (r.lat == null || r.lng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("No map location available for this report."),
-        ),
-      );
-      return;
-    }
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
-        child: SizedBox(
-          height: 300,
-          width: 350,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: WebLiveMap(
-              centerLat: r.lat ?? 0,
-              centerLng: r.lng ?? 0,
-              markerTitle: r.location,
+          const SizedBox(height: 10),
+          _buildInfoRow(
+              Icons.person, "Citizen", report['userName'] ?? "Unknown"),
+          _buildInfoRow(
+              Icons.badge, "Responder", report['responderName'] ?? "Unknown"),
+          _buildInfoRow(Icons.schedule, "Time Rescued",
+              report['timeRescued'] ?? "N/A"),
+          _buildInfoRow(Icons.calendar_today, "Reported At",
+              _formatDate(report['timestamp'])),
+          _buildInfoRow(Icons.place, "Place of Incident",
+              report['placeOfIncident'] ?? "Unknown"),
+          const Divider(color: Colors.white30, height: 20),
+          Text(
+            "Action Story",
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.9),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
-        ),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              report['actionStory'] ?? "No details provided.",
+              style:
+              const TextStyle(color: Colors.white, fontSize: 14, height: 1.4),
+            ),
+          ),
+          if (location != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.location_on, color: Colors.white, size: 18),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    "Lat: ${location.latitude.toStringAsFixed(5)}, Lng: ${location.longitude.toStringAsFixed(5)}",
+                    style:
+                    const TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white70, size: 18),
+          const SizedBox(width: 6),
+          Text(
+            "$label: ",
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
-
-// -------------------- Model --------------------
-class _ReportRow {
-  final String responderId;
-  final String reportId;
-  final String date;
-  final String time;
-  final String description;
-  final String location;
-  final String status;
-  final double? lat;
-  final double? lng;
-
-  _ReportRow({
-    required this.responderId,
-    required this.reportId,
-    required this.date,
-    required this.time,
-    required this.description,
-    required this.location,
-    required this.status,
-    this.lat,
-    this.lng,
-  });
-}
-

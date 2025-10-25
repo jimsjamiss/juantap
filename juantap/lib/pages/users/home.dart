@@ -33,14 +33,20 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   late Animation<double> _rippleAnimation;
   DateTime? _lastDangerSnackbarTime;
   Map<String, dynamic> _dangerZones = {}; // from Firebase
+  bool _isDangerAlertVisible = false; // prevent multiple dialogs
+  String? _ignoredZoneId; // ✅ remember which zone was ignored
+
 
   String _username = '';
   String? profileImageUrl;
   final _user = FirebaseAuth.instance.currentUser;
+  bool _isCheckInRunning = false; // ✅ track if active
 
   final Set<String> _processedAlertKeys = {};
   AudioPlayer? _player;
+  Timer? _responseTimer;
   Timer? _vibrationTimer;
+  bool _isPromptVisible = false; // 🟢 prevents multiple dialogsbool _isPromptVisible = false; // 🟢 prevents multiple dialogs
   bool _checkInActive = false;
 
   DateTime? _lastDangerPopupTime; // ✅ track last popup time
@@ -54,7 +60,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   final DatabaseReference _dangerRef = FirebaseDatabase.instance.ref("danger_zones");
   StreamSubscription<Position>? _posSub;
   final AudioPlayer _dangerPlayer = AudioPlayer();
-  bool _isDangerAlertVisible = false;
+
 
 
   @override
@@ -316,44 +322,107 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     });
   }
 
-// ✅ Check if inside danger zone (Snackbar version)
+// ✅ Smart danger zone detection with per-zone mute and dialog prompt
   void _checkIfInDangerZone(double lat, double lng) {
-    // Prevent multiple popups within short time
-    final now = DateTime.now();
-    if (_lastDangerPopupTime != null &&
-        now.difference(_lastDangerPopupTime!).inSeconds < 10) {
-      return;
-    }
+    if (_dangerZones.isEmpty) return;
 
     for (var zoneEntry in _dangerZones.entries) {
+      final zoneId = zoneEntry.key; // unique ID from Firebase node key
       final zone = Map<String, dynamic>.from(zoneEntry.value);
       final double zLat = (zone["lat"] as num).toDouble();
       final double zLng = (zone["lng"] as num).toDouble();
       final double zRadius = (zone["radius"] as num).toDouble();
-      final zoneName = zone["name"] ?? "Danger Zone";
+      final String zoneName = zone["name"] ?? "Danger Zone";
 
-      final dist = _calculateDistance(lat, lng, zLat, zLng);
-      if (dist <= zRadius) {
-        _lastDangerPopupTime = now;
+      final distance = _calculateDistance(lat, lng, zLat, zLng);
 
-        // ✅ Show snackbar instead of redirection
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              duration: const Duration(seconds: 5),
-              backgroundColor: Colors.red.shade700,
-              content: Text(
-                "⚠️ You are currently inside a Danger Zone. Stay alert!",
-                style: const TextStyle(color: Colors.white),
-              ),
+      if (distance <= zRadius) {
+        // 🧩 If inside the same muted zone, don't show again
+        if (_ignoredZoneId == zoneId) return;
+
+        // 🧩 If a dialog is already visible, don't duplicate
+        if (_isDangerAlertVisible) return;
+
+        _isDangerAlertVisible = true;
+        _lastDangerPopupTime = DateTime.now();
+
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AlertDialog(
+            backgroundColor: const Color(0xFFFFF2F2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
             ),
-          );
-        }
+            title: Column(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    size: 60, color: Colors.redAccent),
+                const SizedBox(height: 12),
+                Text(
+                  '⚠️ You are inside $zoneName',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+            content: const Text(
+              "You’ve entered a flagged danger zone. Stay alert and proceed with caution.\n\nWould you like to view the map for more details?",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              TextButton(
+                onPressed: () {
+                  // 🧩 Remember this zone as ignored
+                  _ignoredZoneId = zoneId;
+                  Future.delayed(const Duration(minutes: 10), () {
+                    _ignoredZoneId = null; // re-enable alerts for this zone after 10 minutes
+                  });
+                  _isDangerAlertVisible = false;
+                  Navigator.pop(context);
+                },
+                child: const Text(
+                  "Ignore",
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: () {
+                  _isDangerAlertVisible = false;
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const MapsLocation()),
+                  );
+                },
+                icon: const Icon(Icons.map, size: 18, color: Colors.white),
+                label: const Text(
+                  "View Map",
+                  style: TextStyle(color: Colors.white),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
 
-        break; // stop after detecting one zone
+        break; // stop after first matching zone
       }
     }
   }
+
 
 // ✅ Haversine distance
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
@@ -367,52 +436,26 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     return R * c;
   }
 
+  Future<void> _triggerSOSAlert(BuildContext context) async {
+    if (context == null || !mounted) return;
+    try {
+      await SOSService.sendSosAlert(); // 🔔 your existing SOS sending function
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+                '🚨 No response detected. SOS alert sent to your contacts!'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("❌ Error sending SOS: $e");
+    }
+  }
 
-  // ✅ Popup alert for danger zone
-  // void _triggerDangerAlert(String zoneName, String message) async {
-  //   if (_isDangerAlertVisible) return;
-  //   _isDangerAlertVisible = true;
-  //
-  //   if (await Vibration.hasVibrator() ?? false) {
-  //     _vibrationTimer?.cancel();
-  //     _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-  //       Vibration.vibrate(duration: 1000);
-  //     });
-  //   }
-  //
-  //   try {
-  //     await _dangerPlayer.setSource(AssetSource("sounds/lingling.mp3"));
-  //     await _dangerPlayer.setReleaseMode(ReleaseMode.loop);
-  //     await _dangerPlayer.resume();
-  //   } catch (e) {
-  //     debugPrint("Audio error: $e");
-  //   }
-  //
-  //   if (!mounted) return;
-  //   showDialog(
-  //     context: context,
-  //     barrierDismissible: false,
-  //     builder: (_) => AlertDialog(
-  //       title: Text("⚠️ $zoneName"),
-  //       content: Text(message),
-  //       actions: [
-  //         TextButton(
-  //           onPressed: () {
-  //             _dangerPlayer.stop();
-  //             _vibrationTimer?.cancel();
-  //             Vibration.cancel();
-  //             _isDangerAlertVisible = false;
-  //             Navigator.pop(context);
-  //
-  //             // ✅ force navigate to maps after closing popup
-  //             Navigator.pushNamed(context, '/maps_location');
-  //           },
-  //           child: const Text("OK"),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -428,147 +471,345 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     }
   }
 
+// ====================== CHECK-IN FLOW ======================
+
   void _startCheckInFlow(BuildContext context) {
     _showActivateCheckInDialog(context);
   }
 
+  /// ✅ Step 1: Activate Check-In Dialog with interval selection
   void _showActivateCheckInDialog(BuildContext context) {
+    int? selectedMinutes; // null until user selects
+    String? errorMessage; // inline error text
+
     showDialog(
       context: context,
-      builder: (_) => _buildModalDialog(
-        image: 'assets/images/app_logo.png',
-        title: 'Activate Check-in mode?',
-        buttonText: 'Apply',
-        onPressed: () {
-          Navigator.pop(context);
-          _showCheckInConfirmation(context);
-        },
-      ),
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFFEFFEF5),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Column(
+                children: [
+                  Image.asset('assets/images/app_logo.png', height: 60),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Activate Check-In Mode',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Select how often you want to confirm your safety:',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  RadioListTile<int>(
+                    title: const Text('Every 15 minutes'),
+                    value: 15,
+                    groupValue: selectedMinutes,
+                    onChanged: (value) {
+                      setState(() {
+                        selectedMinutes = value;
+                        errorMessage = null;
+                      });
+                    },
+                  ),
+                  RadioListTile<int>(
+                    title: const Text('Every 30 minutes'),
+                    value: 30,
+                    groupValue: selectedMinutes,
+                    onChanged: (value) {
+                      setState(() {
+                        selectedMinutes = value;
+                        errorMessage = null;
+                      });
+                    },
+                  ),
+                  RadioListTile<int>(
+                    title: const Text('Every 1 hour'),
+                    value: 60,
+                    groupValue: selectedMinutes,
+                    onChanged: (value) {
+                      setState(() {
+                        selectedMinutes = value;
+                        errorMessage = null;
+                      });
+                    },
+                  ),
+                  if (errorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        errorMessage!,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              actionsAlignment: MainAxisAlignment.center,
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext, rootNavigator: true).pop();
+                  },
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    if (selectedMinutes == null) {
+                      setState(() => errorMessage = '⚠️ Please select a time interval.');
+                      return;
+                    }
+
+                    Navigator.of(dialogContext, rootNavigator: true).pop();
+                    _showCheckInConfirmation(context, selectedMinutes!);
+                  },
+                  child: const Text('Activate'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
-  void _showCheckInConfirmation(BuildContext context) {
+
+  /// ✅ Step 2: Confirmation Dialog before activation (SAFE CONTEXT)
+  void _showCheckInConfirmation(BuildContext context, int intervalMinutes) {
     showDialog(
       context: context,
-      builder: (_) => _buildModalDialog(
-        icon: Icons.check_circle,
-        iconColor: Colors.green,
-        title: 'Please read carefully',
-        content:
-        "You’ve successfully checked in.\nWe’re actively monitoring your status.\n\nYou’ll be prompted every 1 minute. No response will trigger alerts.",
-        buttonText: 'Confirm',
-        onPressed: () {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Check-In Activated'),
-              backgroundColor: Colors.green.shade700,
-              duration: Duration(seconds: 3),
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFFEFFEF5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Column(
+          children: const [
+            Icon(Icons.check_circle, size: 50, color: Colors.green),
+            SizedBox(height: 12),
+            Text(
+              'Check-In Activated',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: Colors.black87,
+              ),
             ),
-          );
-          _startSafetyPromptLoop(context);
-        },
+          ],
+        ),
+        content: Text(
+          "You’ve successfully activated Check-In Mode.\n\n"
+              "You’ll be prompted every $intervalMinutes minutes to confirm your safety.\n"
+              "If you don’t respond within 1 minute, your emergency contacts will be notified.",
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 14),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          GestureDetector(
+            onTap: () async {
+              // ✅ Close the dialog first
+              if (Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+                Navigator.of(dialogContext, rootNavigator: true).pop();
+              }
+
+              // ✅ Wait a bit for dialog to finish closing
+              await Future.delayed(const Duration(milliseconds: 150));
+              if (!mounted) return;
+
+              // ✅ Safe context lookup
+              BuildContext? safeContext;
+              try {
+                safeContext = Navigator.maybeOf(context)?.context;
+              } catch (_) {
+                safeContext = null;
+              }
+
+              if (safeContext != null && mounted) {
+                ScaffoldMessenger.of(safeContext).showSnackBar(
+                  SnackBar(
+                    content: Text('✅ Check-In activated every $intervalMinutes minutes'),
+                    backgroundColor: Colors.green.shade700,
+                    duration: const Duration(seconds: 3),
+                  ),
+                );
+              }
+
+              // ✅ Start check-in loop even if SnackBar skipped
+              _startSafetyPromptLoop(context, intervalMinutes);
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade800,
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: const Text(
+                'Confirm',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  void _startSafetyPromptLoop(BuildContext context) async {
+  /// ✅ Step 3: Start loop timer and first safety prompt
+  void _startSafetyPromptLoop(BuildContext context, int intervalMinutes) async {
+    if (!mounted) return;
+
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final startTime = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
 
     await FirebaseDatabase.instance.ref('check_in_logs/$uid').set({
       'active': true,
       'startTime': startTime,
+      'interval': intervalMinutes,
       'responses': {},
     });
 
     setState(() => _checkInActive = true);
+    _isCheckInRunning = true;
 
     _vibrationTimer?.cancel();
-    _vibrationTimer = Timer.periodic(Duration(seconds: 10), (_) {
-      _showSafetyPrompt(context);
+    _responseTimer?.cancel();
+
+    final safeContext = Navigator.maybeOf(context)?.context ?? context;
+
+    // 🟢 Show first prompt immediately
+    _showSafetyPrompt(safeContext);
+
+    // 🕒 Schedule repeating prompts
+    _vibrationTimer = Timer.periodic(Duration(minutes: intervalMinutes), (t) {
+      if (!mounted || !_isCheckInRunning) {
+        t.cancel();
+        return;
+      }
+      _showSafetyPrompt(safeContext);
     });
   }
 
-  void _showSafetyPrompt(BuildContext context) {
-    showDialog(
+  /// ✅ Step 4: Safety confirmation prompt (auto-SOS after 1 min)
+  void _showSafetyPrompt(BuildContext context) async {
+    if (!mounted || !_isCheckInRunning) return;
+    if (_isPromptVisible) return;
+
+    _isPromptVisible = true;
+    _responseTimer?.cancel();
+
+    await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFFEFFEF5),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Column(
-          children: [
-            Image.asset('assets/images/app_logo.png', height: 60),
-            const SizedBox(height: 12),
-            const Text(
-              'Are you safe right now?\nPlease confirm your status.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.black87,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
-          ],
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          Column(
-            children: [
-              GestureDetector(
-                onTap: () async {
-                  Navigator.pop(context);
-                  final uid = FirebaseAuth.instance.currentUser!.uid;
-                  final timestamp = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+      builder: (dialogContext) {
+        _responseTimer = Timer(const Duration(minutes: 1), () async {
+          if (Navigator.of(dialogContext).canPop()) {
+            Navigator.of(dialogContext).pop();
+          }
+          _isPromptVisible = false;
+          if (mounted) await _triggerSOSAlert(context);
+        });
 
-                  await FirebaseDatabase.instance
-                      .ref('check_in_logs/$uid/responses/$timestamp')
-                      .set("Yes, I'm safe");
-                },
-                child: Container(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade800,
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: const Text(
-                    "Yes, I'm safe",
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ),
-              GestureDetector(
-                onTap: () async {
-                  await _stopCheckIn(context);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Check-In stopped'),
-                      backgroundColor: Colors.red.shade700,
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                },
-                child: Container(
-                  margin: const EdgeInsets.only(top: 8, bottom: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.shade700,
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: const Text(
-                    "Stop Check-In",
-                    style: TextStyle(color: Colors.white),
-                  ),
+        return AlertDialog(
+          backgroundColor: const Color(0xFFEFFEF5),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Column(
+            children: [
+              Image.asset('assets/images/app_logo.png', height: 60),
+              const SizedBox(height: 12),
+              const Text(
+                'Are you safe right now?\nPlease confirm your status.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
                 ),
               ),
             ],
-          )
-        ],
-      ),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            Column(
+              children: [
+                GestureDetector(
+                  onTap: () async {
+                    _responseTimer?.cancel();
+                    if (Navigator.of(dialogContext).canPop()) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    _isPromptVisible = false;
+
+                    if (!mounted) return;
+                    final uid = FirebaseAuth.instance.currentUser!.uid;
+                    final timestamp = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+                    await FirebaseDatabase.instance
+                        .ref('check_in_logs/$uid/responses/$timestamp')
+                        .set("Yes, I'm safe");
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade800,
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: const Text("Yes, I'm safe", style: TextStyle(color: Colors.white)),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () async {
+                    _responseTimer?.cancel();
+                    await _stopCheckIn(context);
+                    if (Navigator.of(dialogContext).canPop()) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    _isPromptVisible = false;
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 8, bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade700,
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: const Text("Stop Check-In", style: TextStyle(color: Colors.white)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
     );
+
+    _isPromptVisible = false;
   }
+
   List<Map<String, dynamic>> _notifications = [];
 
   void _listenToContactRequests() {
@@ -711,15 +952,24 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
 
+  // ============================================================
+// ✅ Step 5: Stop Check-In Cleanly
+// ============================================================
   Future<void> _stopCheckIn(BuildContext context) async {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
     _vibrationTimer?.cancel();
+    _responseTimer?.cancel();
+    _isCheckInRunning = false;
+    _isPromptVisible = false;
+    if (context == null || !mounted) return;
     setState(() => _checkInActive = false);
 
-    await FirebaseDatabase.instance
-        .ref('check_in_logs/$uid/active')
-        .set(false);
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    await FirebaseDatabase.instance.ref('check_in_logs/$uid').update({
+      'active': false,
+      'endTime': DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
+    });
   }
+
   Widget _buildModalDialog({
     IconData? icon,
     Color? iconColor,
@@ -729,56 +979,69 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     required String buttonText,
     required VoidCallback onPressed,
   }) {
-    return AlertDialog(
-      backgroundColor: const Color(0xFFEFFEF5),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      titlePadding: const EdgeInsets.all(16),
-      contentPadding: const EdgeInsets.only(bottom: 12, left: 24, right: 24),
-      title: Column(
-        children: [
-          if (icon != null)
-            Icon(icon, size: 50, color: iconColor)
-          else if (image != null)
-            Image.asset(image, height: 60),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.black87,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
+    return Builder(
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFEFFEF5),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          titlePadding: const EdgeInsets.all(16),
+          contentPadding: const EdgeInsets.only(bottom: 12, left: 24, right: 24),
+          title: Column(
+            children: [
+              if (icon != null)
+                Icon(icon, size: 50, color: iconColor)
+              else if (image != null)
+                Image.asset(image, height: 60),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              if (content != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  content,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ],
+            ],
           ),
-          if (content != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              content,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14),
-            ),
+          actions: [
+            Center(
+              child: GestureDetector(
+                onTap: () {
+                  // ✅ Safely close this dialog using its own context
+                  if (Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+                    Navigator.of(dialogContext, rootNavigator: true).pop();
+                  }
+
+                  // ✅ Then run the callback logic
+                  onPressed();
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade800,
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: Text(
+                    buttonText,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ),
+            )
           ],
-        ],
-      ),
-      actions: [
-        Center(
-          child: GestureDetector(
-            onTap: onPressed,
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.green.shade800,
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: Text(
-                buttonText,
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-          ),
-        )
-      ],
+        );
+      },
     );
   }
 
@@ -845,15 +1108,19 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
 
 
+  // ============================================================
+// ✅ Step 6: Dispose Cleanup
+// ============================================================
   @override
   void dispose() {
     _rippleController.dispose();
-    _vibrationTimer?.cancel();
-    _posSub?.cancel();      // ✅ stop location listener
-    _dangerPlayer.dispose(); // ✅ dispose audio player
+    _vibrationTimer?.cancel();   // ✅ stop interval loop
+    _responseTimer?.cancel();    // ✅ stop SOS countdown
+    _posSub?.cancel();
+    _dangerPlayer.dispose();
+    _isCheckInRunning = false;   // ✅ flag for cleanup
     super.dispose();
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

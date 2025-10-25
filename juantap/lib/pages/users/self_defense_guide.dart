@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'favorites_page.dart';
 
 class SelfDefenseGuidePage extends StatefulWidget {
   const SelfDefenseGuidePage({super.key});
@@ -9,230 +11,404 @@ class SelfDefenseGuidePage extends StatefulWidget {
   State<SelfDefenseGuidePage> createState() => _SelfDefenseGuidePageState();
 }
 
-class _SelfDefenseGuidePageState extends State<SelfDefenseGuidePage> {
+class _SelfDefenseGuidePageState extends State<SelfDefenseGuidePage>
+    with SingleTickerProviderStateMixin {
+  final DatabaseReference _guidesRef =
+  FirebaseDatabase.instance.ref('self_defense_guides');
+  final DatabaseReference _usersRef =
+  FirebaseDatabase.instance.ref('users');
+
   bool _isLoading = true;
-  List<_GuideItem> _guides = [];
+  List<Map<String, dynamic>> _guides = [];
+  List<String> _categories = ['All'];
+  String _selectedCategory = 'All';
+
+  User? _currentUser;
+  Set<String> _favoriteIds = {};
 
   @override
   void initState() {
     super.initState();
-    _loadSelfDefenseGuides();
+    _currentUser = FirebaseAuth.instance.currentUser;
+    _listenToGuides();
+    _listenToFavorites();
   }
 
-  Future<void> _loadSelfDefenseGuides() async {
-    try {
-      final ref = FirebaseDatabase.instance.ref('self_defense_guides');
-      final snapshot = await ref.get();
+  String? _extractThumbnail(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
+    if (uri.host.contains('youtube.com') && uri.queryParameters.containsKey('v')) {
+      return 'https://img.youtube.com/vi/${uri.queryParameters['v']}/hqdefault.jpg';
+    } else if (uri.host.contains('youtu.be')) {
+      final videoId = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : null;
+      return videoId != null
+          ? 'https://img.youtube.com/vi/$videoId/hqdefault.jpg'
+          : null;
+    }
+    return null;
+  }
 
-      final List<_GuideItem> loaded = [];
+  void _listenToGuides() {
+    _guidesRef.onValue.listen((event) {
+      final List<Map<String, dynamic>> loaded = [];
+      final Set<String> categorySet = {};
 
-      if (snapshot.exists) {
-        for (final child in snapshot.children) {
-          final raw = (child.value as Map).cast<dynamic, dynamic>();
+      for (final guide in event.snapshot.children) {
+        final data = guide.value as Map<dynamic, dynamic>?;
+        if (data == null) continue;
+        final title = (data['title'] ?? 'Untitled').toString();
+        final description = (data['description'] ?? '').toString();
+        final link = (data['link'] ?? '').toString();
+        final category = (data['category'] ?? 'Uncategorized').toString();
+        final uploadedAt = (data['uploaded_at'] ?? '').toString();
 
-          // Normalize fields across different writer UIs
-          final title = (raw['title'] ??
-              raw['name'] ??
-              'Untitled')
-              .toString();
+        if (category.isNotEmpty) categorySet.add(category);
+        final thumb = _extractThumbnail(link);
 
-          final description = (raw['description'] ?? '').toString();
-
-          // File/PDF url may be under 'url' or 'fileurl'
-          final fileUrl = (raw['url'] ?? raw['fileurl']);
-          final String? safeFileUrl =
-          fileUrl == null ? null : fileUrl.toString();
-
-          // Images can be: a single 'imageurl' string or a 'images' list
-          final List<String> images = [];
-          if (raw['images'] is List) {
-            for (final e in (raw['images'] as List)) {
-              if (e is String && e.isNotEmpty) images.add(e);
-            }
-          }
-          final singleImage = raw['imageurl'];
-          if (singleImage is String && singleImage.isNotEmpty) {
-            images.add(singleImage);
-          }
-
-          final uploadedAt = (raw['uploaded_at'] ?? '').toString();
-
-          loaded.add(_GuideItem(
-            title: title,
-            description: description,
-            uploadedAt: uploadedAt,
-            fileUrl: safeFileUrl,
-            images: images,
-          ));
-        }
+        loaded.add({
+          'id': guide.key,
+          'title': title,
+          'description': description,
+          'link': link,
+          'thumbnail': thumb,
+          'category': category,
+          'uploaded_at': uploadedAt,
+        });
       }
 
       setState(() {
         _guides = loaded;
+        _categories = ['All', ...categorySet.toList()];
         _isLoading = false;
       });
-    } catch (e) {
-      setState(() => _isLoading = false);
-      if (!mounted) return;
+    });
+  }
+
+  void _listenToFavorites() {
+    if (_currentUser == null) return;
+    final favRef = _usersRef.child('${_currentUser!.uid}/favorites');
+    favRef.onValue.listen((event) {
+      final favIds = <String>{};
+      for (final fav in event.snapshot.children) {
+        favIds.add(fav.key ?? '');
+      }
+      setState(() => _favoriteIds = favIds);
+    });
+  }
+
+  Future<void> _toggleFavorite(Map<String, dynamic> guideData) async {
+    if (_currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load guides: $e')),
+        const SnackBar(content: Text('You must be logged in to favorite guides.')),
       );
+      return;
+    }
+
+    final favRef =
+    _usersRef.child('${_currentUser!.uid}/favorites/${guideData['id']}');
+
+    if (_favoriteIds.contains(guideData['id'])) {
+      await favRef.remove();
+    } else {
+      await favRef.set({
+        'title': guideData['title'],
+        'description': guideData['description'],
+        'link': guideData['link'],
+        'thumbnail': guideData['thumbnail'],
+        'category': guideData['category'],
+        'uploaded_at': guideData['uploaded_at'],
+      });
     }
   }
 
-  Future<void> _openUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
+  Future<void> _openLink(String url) async {
+    if (url.isEmpty) return;
+    try {
+      String fixedUrl = url.trim();
+      if (!fixedUrl.startsWith('http')) {
+        fixedUrl = 'https://$fixedUrl';
+      }
+
+      final uri = Uri.parse(fixedUrl);
       await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot open link')),
+        SnackBar(content: Text('Failed to open video: $e')),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final filtered = _selectedCategory == 'All'
+        ? _guides
+        : _guides.where((g) => g['category'] == _selectedCategory).toList();
+
     return Scaffold(
+      backgroundColor: const Color(0xFFEFFFFA),
       appBar: AppBar(
-        title: const Text('Self-Defense Guide Tips'),
-        backgroundColor: const Color(0xFF2A9D8F),
+        elevation: 6,
+        shadowColor: Colors.black26,
+        automaticallyImplyLeading: true,
+        title: const Text(
+          'Self-Defenses',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 20,
+            letterSpacing: 0.4,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: true,
         foregroundColor: Colors.white,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF2EB872), Color(0xFF1C8873)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12.0),
+            child: TextButton.icon(
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                backgroundColor: Colors.white.withOpacity(0.15),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(30),
+                  side: const BorderSide(color: Colors.white70, width: 1),
+                ),
+              ),
+              icon: const Icon(Icons.favorite, color: Colors.white, size: 20),
+              label: const Text(
+                'Favorites',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                  fontSize: 15,
+                ),
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const FavoritesPage()),
+                );
+              },
+            ),
+          ),
+        ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF2EB872)))
           : _guides.isEmpty
-          ? const Center(child: Text('No guides available.'))
-          : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _guides.length,
-        itemBuilder: (context, i) {
-          final g = _guides[i];
-
-          return Card(
-            margin: const EdgeInsets.symmetric(vertical: 8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  vertical: 12, horizontal: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Title
-                  Text(
-                    g.title,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-
-                  // Optional uploaded time
-                  if (g.uploadedAt.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'Uploaded: ${g.uploadedAt}',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-
-                  // Optional description
-                  if (g.description.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      g.description,
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                  ],
-
-                  // Image gallery (horizontal)
-                  if (g.images.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 96,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: g.images.length,
-                        separatorBuilder: (_, __) =>
-                        const SizedBox(width: 8),
-                        itemBuilder: (context, idx) {
-                          final url = g.images[idx];
-                          return ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: InkWell(
-                              onTap: () {
-                                // open full screen preview instead of url_launcher
-                                showDialog(
-                                  context: context,
-                                  builder: (_) => Dialog(
-                                    insetPadding: EdgeInsets.all(16),
-                                    child: InteractiveViewer(
-                                      child: Image.network(
-                                        url,
-                                        fit: BoxFit.contain,
-                                        errorBuilder: (_, __, ___) => const Center(
-                                          child: Icon(Icons.broken_image, size: 48),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Image.network(
-                                url,
-                                width: 120,
-                                height: 96,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  color: Colors.grey.shade300,
-                                  width: 120,
-                                  height: 96,
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.image_not_supported),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-
-                  // File/PDF open button (if present)
-                  if (g.fileUrl != null) ...[
-                    const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: ElevatedButton.icon(
-                        onPressed: () => _openUrl(g.fileUrl!),
-                        icon: const Icon(Icons.open_in_new),
-                        label: const Text('Open'),
-                      ),
-                    ),
-                  ],
-                ],
+          ? const Center(
+        child: Text(
+          'No self-defense guides found.',
+          style: TextStyle(fontSize: 16, color: Colors.grey),
+        ),
+      )
+          : Column(
+        children: [
+          Padding(
+            padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: DropdownButtonFormField<String>(
+              value: _selectedCategory,
+              items: _categories
+                  .map((cat) => DropdownMenuItem(
+                value: cat,
+                child: Text(cat),
+              ))
+                  .toList(),
+              onChanged: (value) {
+                setState(() => _selectedCategory = value!);
+              },
+              decoration: InputDecoration(
+                labelText: "Filter by Category",
+                filled: true,
+                fillColor: Colors.white,
+                labelStyle: const TextStyle(
+                    color: Color(0xFF0E4D35),
+                    fontWeight: FontWeight.bold),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide:
+                  const BorderSide(color: Color(0xFF2EB872), width: 2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
               ),
             ),
-          );
-        },
+          ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: filtered.length,
+              itemBuilder: (context, i) {
+                final g = filtered[i];
+                final isFav = _favoriteIds.contains(g['id']);
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                  child: _GuideCard(
+                    title: g['title'],
+                    description: g['description'],
+                    link: g['link'],
+                    thumbnail: g['thumbnail'],
+                    category: g['category'],
+                    isFavorite: isFav,
+                    onTap: () => _openLink(g['link']),
+                    onFavoriteTap: () => _toggleFavorite(g),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _GuideItem {
+class _GuideCard extends StatelessWidget {
   final String title;
   final String description;
-  final String uploadedAt;
-  final String? fileUrl; // pdf/attachment if any
-  final List<String> images; // zero or more image URLs
+  final String link;
+  final String? thumbnail;
+  final String category;
+  final bool isFavorite;
+  final VoidCallback onTap;
+  final VoidCallback onFavoriteTap;
 
-  _GuideItem({
+  const _GuideCard({
     required this.title,
     required this.description,
-    required this.uploadedAt,
-    required this.fileUrl,
-    required this.images,
+    required this.link,
+    required this.thumbnail,
+    required this.category,
+    required this.isFavorite,
+    required this.onTap,
+    required this.onFavoriteTap,
   });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapUp: (_) => onTap(),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFFFF),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFB7E2C1), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.green.withOpacity(0.15),
+              blurRadius: 10,
+              offset: const Offset(2, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(20)),
+                  child: thumbnail != null
+                      ? Image.network(
+                    thumbnail!,
+                    width: double.infinity,
+                    height: 200,
+                    fit: BoxFit.cover,
+                  )
+                      : Container(
+                    height: 200,
+                    color: Colors.grey.shade300,
+                    child: const Icon(Icons.image_not_supported_outlined,
+                        color: Colors.grey, size: 40),
+                  ),
+                ),
+                Positioned(
+                  bottom: 10,
+                  right: 12,
+                  child: GestureDetector(
+                    onTap: onFavoriteTap,
+                    child: Icon(
+                      isFavorite ? Icons.favorite : Icons.favorite_border,
+                      color: isFavorite ? Colors.redAccent : Colors.white,
+                      size: 34,
+                      shadows: const [
+                        Shadow(
+                            blurRadius: 8,
+                            color: Colors.black38,
+                            offset: Offset(1, 2))
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0E4D35),
+                      height: 1.4,
+                    ),
+                    softWrap: true,
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2EB872).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      category,
+                      style: const TextStyle(
+                        color: Color(0xFF1C8873),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    description,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      height: 1.5,
+                      color: Color(0xFF2F4F4F),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
