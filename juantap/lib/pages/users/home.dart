@@ -844,6 +844,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
       setState(() {
         _notifications = newNotifs;
+        
       });
     });
   }
