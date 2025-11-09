@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:juantap/pages/users/home.dart';
 import 'package:firebase_database/firebase_database.dart';
+
+// Your imports
+import 'package:juantap/pages/users/home.dart';
 import 'package:juantap/pages/responders/responder.dart';
 import '../admin/admin.dart';
-import 'package:juantap/pages/users/signup.dart';
-import 'package:juantap/pages/users/signup.dart';
+import 'signup.dart';
 
 class Login extends StatelessWidget {
   const Login({super.key});
@@ -47,14 +48,14 @@ class _LoginPageState extends State<LoginPage> {
     final password = _passwordController.text;
 
     setState(() {
-      _isButtonEnabled =
-          email.isNotEmpty &&
-              RegExp(r'\S+@\S+\.\S+').hasMatch(email) &&
-              password.length >= 6;
+      _isButtonEnabled = email.isNotEmpty &&
+          RegExp(r'\S+@\S+\.\S+').hasMatch(email) &&
+          password.length >= 6;
     });
   }
 
   void _showSnackbar(String message, Color bgColor) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -66,71 +67,137 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _login() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
+    if (!_formKey.currentState!.validate()) return;
 
-      try {
-        final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
+    setState(() => _isLoading = true);
 
-        final uid = credential.user!.uid;
-        final userRef = FirebaseDatabase.instance.ref('users/$uid');
-        final snapshot = await userRef.get();
+    try {
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
 
-        if (!snapshot.exists) {
-          _showSnackbar('User data not found.', Colors.red);
-          setState(() => _isLoading = false);
-          return;
-        }
+      if (!mounted) return;
+      final uid = credential.user!.uid;
+      final userRef = FirebaseDatabase.instance.ref('users/$uid');
+      final snapshot = await userRef.get();
 
-        final role = snapshot.child('role').value.toString();
-
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => AlertDialog(
-            backgroundColor: const Color(0xFFF7F6D9),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                AnimatedCheckmark(),
-                SizedBox(height: 12),
-                Text('Login Successful!', style: TextStyle(fontWeight: FontWeight.bold)),
-                SizedBox(height: 6),
-              ],
-            ),
-          ),
-        );
-
-        Future.delayed(const Duration(seconds: 2), () {
-          Navigator.of(context).pop(); // close dialog
-
-          if (role == 'admin') {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminDashboardPage()));
-          } else if (role == 'responder') {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ResponderDashboard()));
-          } else {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
-          }
-        });
-
-      } on FirebaseAuthException catch (e) {
-        String errorMsg = 'Login failed';
-        if (e.code == 'user-not-found') {
-          errorMsg = 'No user found for that email.';
-        } else if (e.code == 'wrong-password') {
-          errorMsg = 'Incorrect password.';
-        }
-        _showSnackbar(errorMsg, Colors.red);
-      } catch (e) {
-        _showSnackbar('Error: $e', Colors.red);
-      } finally {
+      if (!snapshot.exists) {
+        _showSnackbar('User data not found.', Colors.red);
         setState(() => _isLoading = false);
+        return;
       }
+
+      final role = snapshot.child('role').value.toString();
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFFF7F6D9),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              AnimatedCheckmark(),
+              SizedBox(height: 12),
+              Text(
+                'Login Successful!',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 6),
+            ],
+          ),
+        ),
+      );
+
+      Future.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        Navigator.of(context, rootNavigator: true).pop();
+
+        Widget nextPage;
+        if (role == 'admin') {
+          nextPage = const AdminDashboardPage();
+        } else if (role == 'responder') {
+          nextPage = const ResponderDashboard();
+        } else {
+          nextPage = const HomePage();
+        }
+
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => nextPage),
+          );
+        }
+      });
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      String errorMsg = 'Login failed';
+      if (e.code == 'user-not-found') {
+        errorMsg = 'No user found for that email.';
+      } else if (e.code == 'wrong-password') {
+        errorMsg = 'Incorrect password.';
+      }
+      _showSnackbar(errorMsg, Colors.red);
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackbar('Error: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// ✅ Forgot Password Modal
+  void _showForgotPasswordDialog() {
+    final TextEditingController emailController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Reset Password'),
+        content: TextField(
+          controller: emailController,
+          decoration: const InputDecoration(
+            hintText: 'Enter your registered email',
+            prefixIcon: Icon(Icons.email_outlined),
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final email = emailController.text.trim();
+              if (email.isEmpty) {
+                _showSnackbar('Please enter your email.', Colors.red);
+                return;
+              }
+
+              try {
+                await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                if (!mounted) return;
+                Navigator.pop(context);
+                _showSnackbar('Password reset link sent to $email', Colors.green);
+              } on FirebaseAuthException catch (e) {
+                if (!mounted) return;
+                String msg = 'Failed to send reset email.';
+                if (e.code == 'user-not-found') {
+                  msg = 'No account found with that email.';
+                }
+                _showSnackbar(msg, Colors.red);
+              } catch (e) {
+                _showSnackbar('Error: $e', Colors.red);
+              }
+            },
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -222,7 +289,9 @@ class _LoginPageState extends State<LoginPage> {
                         prefixIcon: const Icon(Icons.key_outlined),
                         suffixIcon: IconButton(
                           icon: Icon(
-                            _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                            _isPasswordVisible
+                                ? Icons.visibility
+                                : Icons.visibility_off,
                             color: Colors.grey,
                           ),
                           onPressed: () {
@@ -249,6 +318,21 @@ class _LoginPageState extends State<LoginPage> {
                         return null;
                       },
                     ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: GestureDetector(
+                        onTap: _showForgotPasswordDialog,
+                        child: const Text(
+                          'Forgot Password?',
+                          style: TextStyle(
+                            color: Colors.white,
+                            decoration: TextDecoration.underline,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 30),
                     SizedBox(
                       width: double.infinity,
@@ -264,7 +348,8 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                          valueColor:
+                          AlwaysStoppedAnimation<Color>(Colors.black),
                         )
                             : const Text(
                           'Login',
@@ -285,10 +370,14 @@ class _LoginPageState extends State<LoginPage> {
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const Registration()),
+                              MaterialPageRoute(
+                                  builder: (_) => const Registration()),
                             );
                           },
-                          child: const Text('Register here!', style: TextStyle(color: Colors.white)),
+                          child: const Text(
+                            'Register here!',
+                            style: TextStyle(color: Colors.white),
+                          ),
                         ),
                       ],
                     ),

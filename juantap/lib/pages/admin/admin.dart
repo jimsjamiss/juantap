@@ -136,7 +136,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   _navButton(Icons.people, "Manage Users", 1),
                   _navButton(Icons.report, "Incident Reports", 2),
                   _navButton(Icons.map, "Geofencing", 3),
-                  _navButton(Icons.settings, "Settings", 4),
                   const Spacer(),
                   const Padding(
                     padding: EdgeInsets.only(bottom: 16),

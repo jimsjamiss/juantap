@@ -47,7 +47,7 @@ class SOSService {
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // 🔹 3. Construct complete SOS alert payload
+      // 🔹 3. Construct complete SOS alert payload (base info)
       final alertData = {
         'userId': uid,
         'username': username,
@@ -66,13 +66,32 @@ class SOSService {
       };
 
       // 🔹 4. Send to user's emergency contacts (sos_alerts)
-      final contactsRef = db.child('contacts/$uid');
-      final contactsSnapshot = await contactsRef.get();
+      // ✅ Support both "contacts" and "sos_contacts" just in case
+      DatabaseReference contactsRef = db.child('contacts/$uid');
+      DataSnapshot contactsSnapshot = await contactsRef.get();
+
+      if (!contactsSnapshot.exists) {
+        // Try fallback node name if main is empty
+        contactsRef = db.child('sos_contacts/$uid');
+        contactsSnapshot = await contactsRef.get();
+      }
 
       if (contactsSnapshot.exists) {
         final contacts = Map<String, dynamic>.from(contactsSnapshot.value as Map);
+
         for (final contactId in contacts.keys) {
-          await db.child('sos_alerts/$contactId/$uid').set(alertData);
+          // 🚫 Prevent sending to self
+          if (contactId == uid) {
+            print('⚠️ Skipped sending SOS to self ($uid)');
+            continue;
+          }
+
+          // 🧩 Add recipients list (for listener filtering)
+          final updatedAlertData = Map<String, dynamic>.from(alertData);
+          updatedAlertData['recipients'] = [contactId];
+
+          // 📦 Save to sos_alerts node
+          await db.child('sos_alerts/$contactId/$uid').set(updatedAlertData);
           print('📨 SOS sent to contact: $contactId');
         }
       } else {
@@ -83,7 +102,11 @@ class SOSService {
       await db.child('responder_alerts').push().set(alertData);
       print('🚨 SOS alert successfully pushed to responder_alerts.');
 
-      // ✅ 6. Log success
+      // 🔹 6. Optional: log to sender’s own history
+      await db.child('user_alerts/$uid').push().set(alertData);
+      print('🗂️ SOS alert logged under user_alerts/$uid');
+
+      // ✅ 7. Log success
       print("✅ SOS alert successfully sent to responders and contacts.");
     } catch (e) {
       print('❌ Error sending SOS alert: $e');

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'contact_lists_requests.dart';
+
 
 class ContactListPage extends StatefulWidget {
   @override
@@ -80,10 +82,13 @@ class _ContactListPageState extends State<ContactListPage> {
     final senderPhone = senderSnapshot.child('phone').value?.toString() ?? '';
 
     final receiverSnapshot = await usersRef.child(uid).get();
-    final receiverUsername = receiverSnapshot.child('username').value?.toString() ?? currentUser.displayName ?? 'You';
+    final receiverUsername = receiverSnapshot.child('username').value?.toString() ??
+        currentUser.displayName ??
+        'You';
     final receiverProfileImage = receiverSnapshot.child('profileImage').value?.toString() ?? '';
     final receiverPhone = receiverSnapshot.child('phone').value?.toString() ?? '';
 
+    // ✅ 1. Add each other as contacts
     await _contactsRef.child(uid).child(senderUid).set({
       'nickname': '',
       'name': senderUsername,
@@ -98,9 +103,35 @@ class _ContactListPageState extends State<ContactListPage> {
       'profileImage': receiverProfileImage,
     });
 
+    // ✅ 2. Remove the request entry
     await _requestsRef.child(uid).child(senderUid).remove();
+
+    // ✅ 3. Send notification to the sender (the one who made the request)
+    final notificationsRef = FirebaseDatabase.instance.ref('notifications/$senderUid');
+    await notificationsRef.push().set({
+      'title': 'Contact Request Accepted',
+      'message': '$receiverUsername accepted your contact request.',
+      'timestamp': ServerValue.timestamp,
+      'read': false,
+      'type': 'contact_accept',
+    });
+
+    // ✅ 4. Refresh local requests
     _loadRequests();
+
+    // ✅ 5. Optional: Snackbar for confirmation
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ You are now connected with $senderUsername'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
+
 
   Future<void> _declineRequest(String senderUid) async {
     await _requestsRef.child(FirebaseAuth.instance.currentUser!.uid).child(senderUid).remove();
@@ -294,10 +325,55 @@ class _ContactListPageState extends State<ContactListPage> {
     );
   }
 
-  void _deleteContact(String key) async {
-    await _contactsRef.child(FirebaseAuth.instance.currentUser!.uid).child(key).remove();
-  }
+  Future<void> _deleteContact(String key) async {
+    // Show confirmation dialog first
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Deletion'),
+        content: const Text('Are you sure you want to remove this contact?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
 
+    // If user pressed "Delete" (confirm == true)
+    if (confirm == true) {
+      try {
+        await _contactsRef.child(FirebaseAuth.instance.currentUser!.uid).child(key).remove();
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Contact removed successfully'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to remove contact: $e'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
   void _showAddContactModal(BuildContext context) {
     final usernameController = TextEditingController();
 
@@ -333,22 +409,39 @@ class _ContactListPageState extends State<ContactListPage> {
               if (usersSnapshot.exists) {
                 final users = Map<String, dynamic>.from(usersSnapshot.value as Map);
 
-                users.forEach((uid, data) {
-                  final user = Map<String, dynamic>.from(data);
+                for (final entry in users.entries) {
+                  final uid = entry.key;
+                  final user = Map<String, dynamic>.from(entry.value);
+
+                  final dbUsername = (user['username'] ?? '').toString().trim().toLowerCase();
                   if (uid == senderUid) {
-                    senderUsername = user['username'];
+                    senderUsername = user['username'] ?? currentUser.displayName ?? 'Unknown';
                   }
-                  if (user['username'].toString().toLowerCase() == receiverUsername.toLowerCase()) {
+                  if (dbUsername == receiverUsername.toLowerCase()) {
                     receiverUid = uid;
                   }
-                });
+                }
               }
 
               if (receiverUid != null && senderUsername != null) {
+                // 🟢 Prevent sending to self
+                if (receiverUid == senderUid) {
+                  Navigator.pop(context);
+                  showDialog(
+                    context: context,
+                    builder: (_) => const AlertDialog(
+                      title: Text('Invalid Request'),
+                      content: Text("You can't send a request to yourself."),
+                    ),
+                  );
+                  return;
+                }
+
+                // 🟢 Save under receiver's UID
                 await contactRequestsRef.child(receiverUid!).child(senderUid).set({
                   'status': 'pending',
                   'senderUsername': senderUsername,
-                  'timestamp': DateTime.now().millisecondsSinceEpoch,
+                  'timestamp': ServerValue.timestamp,
                 });
 
                 Navigator.pop(context);
@@ -358,12 +451,12 @@ class _ContactListPageState extends State<ContactListPage> {
                 showDialog(
                   context: context,
                   builder: (_) => AlertDialog(
-                    title: Text('User Not Found'),
+                    title: const Text('User Not Found'),
                     content: Text('The username "$receiverUsername" does not exist.'),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context),
-                        child: Text('OK'),
+                        child: const Text('OK'),
                       ),
                     ],
                   ),

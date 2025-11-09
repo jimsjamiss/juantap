@@ -15,7 +15,7 @@ import 'package:juantap/pages/users/splash_screen.dart';
 import 'package:juantap/pages/users/signup.dart';
 import 'package:juantap/pages/users/edit_profile.dart';
 import 'package:juantap/pages/users/maps_location.dart';
-import 'package:juantap/pages/users/check_in.dart';
+
 import 'package:juantap/pages/users/contact_lists.dart';
 import 'package:juantap/pages/users/contact_lists_requests.dart';
 import 'package:juantap/pages/responders/edit_responder_profile.dart';
@@ -80,7 +80,6 @@ class JuanTap extends StatelessWidget {
         '/registration': (context) => const Registration(),
         '/edit_profile': (context) => const EditProfilePage(),
         '/maps_location': (context) => const MapsLocation(),
-        '/check_in': (context) => CheckInPage(),
         '/contact_lists': (context) => ContactListPage(),
         '/contact_lists_requests': (context) =>
             ContactListsRequestsPage(),

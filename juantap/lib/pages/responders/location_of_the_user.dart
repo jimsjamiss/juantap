@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -39,10 +38,11 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
   String? _profileImage;
   bool _isLoadingRoute = false;
   double? _travelTimeMinutes;
+  double? _travelDistanceKm;
 
-  // ✅ Flask API URL
-  // final String _flaskUrl = "http://192.168.1.5:5000/safe-route";
-  final String _flaskUrl = "https://juantap-flask.onrender.com/safe-route";
+  // ✅ OpenRouteService API Key
+  final String _orsApiKey =
+      "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjZkNTQ2YzZmZmE0ZDQ0Yzc5OWFiMTQ3Yzg2ZTllZTI5IiwiaCI6Im11cm11cjY0In0=";
 
   @override
   void initState() {
@@ -54,11 +54,13 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
 
   Future<void> _fetchUserProfile() async {
     try {
-      final snap = await FirebaseDatabase.instance.ref('users/${widget.userId}').get();
+      final snap =
+      await FirebaseDatabase.instance.ref('users/${widget.userId}').get();
       if (snap.exists) {
         final data = Map<String, dynamic>.from(snap.value as Map);
         setState(() {
-          _profileImage = (data['profileImage'] != null && data['profileImage'].toString().isNotEmpty)
+          _profileImage = (data['profileImage'] != null &&
+              data['profileImage'].toString().isNotEmpty)
               ? data['profileImage']
               : 'https://i.imgur.com/8Km9tLL.jpg';
         });
@@ -70,18 +72,23 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
 
   void _listenToResponderLocation() async {
     LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       permission = await Geolocator.requestPermission();
     }
 
     _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.best, distanceFilter: 5),
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 1,
+      ),
     );
 
     _positionStream!.listen((pos) {
-      setState(() => _responderLocation = LatLng(pos.latitude, pos.longitude));
+      _responderLocation = LatLng(pos.latitude, pos.longitude);
       _updateMap();
-      _drawFlaskSafeRoute();
+      _drawNavigationRoute();
+      _followResponder();
     });
   }
 
@@ -106,81 +113,67 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     });
   }
 
-  Future<void> _drawFlaskSafeRoute() async {
+  // ✅ Accurate Lalamove-style route using ORS
+  Future<void> _drawNavigationRoute() async {
     if (_responderLocation == null) return;
 
-    setState(() {
-      _isLoadingRoute = true;
-      _travelTimeMinutes = null;
-    });
+    setState(() => _isLoadingRoute = true);
 
-    final body = json.encode({
-      "origin": [_responderLocation!.latitude, _responderLocation!.longitude],
-      "destination": [_userLocation.latitude, _userLocation.longitude],
-    });
+    final url =
+        "https://api.openrouteservice.org/v2/directions/driving-car?api_key=$_orsApiKey&start=${_responderLocation!.longitude},${_responderLocation!.latitude}&end=${_userLocation.longitude},${_userLocation.latitude}&geometry_format=geojson";
 
     try {
-      final res = await http.post(
-        Uri.parse(_flaskUrl),
-        headers: {"Content-Type": "application/json"},
-        body: body,
-      );
+      final res = await http.get(Uri.parse(url));
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
+        final route = data["features"][0];
+        final coords = route["geometry"]["coordinates"];
+        final summary = route["properties"]["summary"];
 
-        if (data["safe_route"] != null) {
-          // ✅ FIX: handle reversed coordinates (lon, lat vs lat, lon)
-          final route = (data["safe_route"] as List)
-              .map((p) {
-            final first = p[0].toDouble();
-            final second = p[1].toDouble();
-            // If coordinates look reversed, fix automatically
-            return (first.abs() <= 90 && second.abs() >= 90)
-                ? LatLng(first, second)
-                : LatLng(second, first);
-          })
-              .toList();
-
-          if (data["duration"] != null) {
-            setState(() => _travelTimeMinutes = data["duration"] / 60);
-          }
-
-          if (route.isNotEmpty) {
-            setState(() {
-              _polylines = {
-                Polyline(
-                  polylineId: const PolylineId("safe_route"),
-                  color: const Color(0xFF2ECC71),
-                  width: 6,
-                  points: route,
-                ),
-              };
-              _isLoadingRoute = false;
-            });
-            await _fitCameraToBounds(route);
-          }
-        } else {
-          _drawFallbackLine();
+        // ✅ Correctly map lon, lat -> LatLng(lat, lon)
+        final List<LatLng> routePoints = [];
+        for (var c in coords) {
+          final lon = c[0].toDouble();
+          final lat = c[1].toDouble();
+          routePoints.add(LatLng(lat, lon));
         }
+
+        setState(() {
+          _polylines = {
+            Polyline(
+              polylineId: const PolylineId("navigation_route"),
+              color: Colors.blueAccent,
+              width: 6,
+              startCap: Cap.roundCap,
+              endCap: Cap.roundCap,
+              jointType: JointType.round,
+              points: routePoints,
+            ),
+          };
+          _travelTimeMinutes = (summary["duration"] ?? 0) / 60;
+          _travelDistanceKm = (summary["distance"] ?? 0) / 1000;
+          _isLoadingRoute = false;
+        });
+
+        await _fitCameraToRoute(routePoints);
       } else {
-        debugPrint("❌ Flask returned ${res.statusCode}");
+        debugPrint("❌ ORS error: ${res.statusCode}");
         _drawFallbackLine();
       }
     } catch (e) {
-      debugPrint("❌ Flask route error: $e");
+      debugPrint("❌ Route error: $e");
       _drawFallbackLine();
     }
   }
 
   void _drawFallbackLine() {
     if (_responderLocation == null) return;
-
     setState(() {
       _polylines = {
         Polyline(
           polylineId: const PolylineId("direct_line"),
-          color: Colors.redAccent,
+          color: Colors.orangeAccent,
           width: 4,
           points: [_responderLocation!, _userLocation],
         ),
@@ -189,7 +182,22 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     });
   }
 
-  Future<void> _fitCameraToBounds(List<LatLng> points) async {
+  // ✅ Auto-follow camera as responder moves
+  Future<void> _followResponder() async {
+    if (_mapController == null || _responderLocation == null) return;
+    await _mapController!.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: _responderLocation!,
+          zoom: 17,
+          bearing: 0,
+          tilt: 45,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _fitCameraToRoute(List<LatLng> points) async {
     if (_mapController == null || points.isEmpty) return;
 
     double minLat = points.first.latitude, maxLat = points.first.latitude;
@@ -203,7 +211,10 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     }
 
     await _mapController!.animateCamera(CameraUpdate.newLatLngBounds(
-      LatLngBounds(southwest: LatLng(minLat, minLng), northeast: LatLng(maxLat, maxLng)),
+      LatLngBounds(
+        southwest: LatLng(minLat, minLng),
+        northeast: LatLng(maxLat, maxLng),
+      ),
       60,
     ));
   }
@@ -234,7 +245,10 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
           children: [
             const Text(
               'Location of the user',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             Container(
@@ -242,19 +256,21 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [Color(0xFF25C09C), Color(0xFF2ECC71), Color(0xFFFF6B6B)],
-                  stops: [0.0, 0.7, 1.0],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.25), blurRadius: 8, offset: Offset(0, 4)),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
                 ],
               ),
               child: Column(
                 children: [
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(50),
@@ -278,21 +294,13 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold)),
                             const SizedBox(height: 4),
-                            if (_travelTimeMinutes != null)
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  const Icon(Icons.access_time, color: Colors.white, size: 16),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _formatTravelTime(_travelTimeMinutes!),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
+                            if (_travelTimeMinutes != null && _travelDistanceKm != null)
+                              Text(
+                                "ETA: ${_formatTravelTime(_travelTimeMinutes!)}  •  ${_travelDistanceKm!.toStringAsFixed(2)} km away",
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14),
                               ),
                           ],
                         ),
@@ -309,13 +317,13 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: GoogleMap(
-                          initialCameraPosition:
-                          CameraPosition(target: _userLocation, zoom: 15),
+                          initialCameraPosition: CameraPosition(target: _userLocation, zoom: 15),
                           onMapCreated: (controller) => _mapController = controller,
                           markers: _markers,
                           polylines: _polylines,
                           myLocationEnabled: true,
                           myLocationButtonEnabled: true,
+                          compassEnabled: true,
                         ),
                       ),
                       if (_isLoadingRoute)
@@ -334,7 +342,7 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Text(
-                      'Follow the green route to reach the user safely.',
+                      'Follow the blue route to reach the user like navigation apps.',
                       style: TextStyle(fontSize: 13, color: Colors.black87),
                     ),
                   ),

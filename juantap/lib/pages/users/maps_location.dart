@@ -10,7 +10,15 @@ import 'package:vibration/vibration.dart';
 import 'package:http/http.dart' as http;
 
 class MapsLocation extends StatefulWidget {
-  const MapsLocation({super.key});
+  /// ✅ Added optional latitude & longitude (fixes your `alert['lat']` / `alert['lng']` error)
+  final double? latitude;
+  final double? longitude;
+
+  const MapsLocation({
+    super.key,
+    this.latitude,
+    this.longitude,
+  });
 
   @override
   State<MapsLocation> createState() => _MapsLocationState();
@@ -168,11 +176,9 @@ class _MapsLocationState extends State<MapsLocation> {
     return R * c;
   }
 
-  // ✅ Generate safe point dynamically outside zone
   LatLng _generateSafePoint(LatLng dangerCenter, double radiusMeters) {
     const double buffer = 80; // ensures it's outside the danger zone
     final double safeDistance = radiusMeters + buffer;
-
     final double angle = Random().nextDouble() * 2 * pi;
 
     final double offsetLat = (safeDistance / 111320) * cos(angle);
@@ -190,7 +196,6 @@ class _MapsLocationState extends State<MapsLocation> {
     return safePoint;
   }
 
-  // 🌿 Gentle, calming alert popup (UI unchanged)
   void _showGentleAlert(
       String zoneName,
       String message, {
@@ -325,7 +330,6 @@ class _MapsLocationState extends State<MapsLocation> {
     );
   }
 
-  // ✅ Safe route request to Flask
   Future<void> _drawFlaskSafeRoute(LatLng start, LatLng end) async {
     final body = json.encode({
       "origin": [start.longitude, start.latitude],
@@ -397,18 +401,31 @@ class _MapsLocationState extends State<MapsLocation> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ Added safe handling if latitude/longitude are provided from alert
+    final LatLng initialTarget = widget.latitude != null && widget.longitude != null
+        ? LatLng(widget.latitude!, widget.longitude!)
+        : (_userPosition ?? const LatLng(10.3157, 123.8854));
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("JuanTap Safe Navigation"),
         backgroundColor: Colors.teal.shade300,
       ),
-      body: (!_isPermissionGranted || _userPosition == null)
+      body: (!_isPermissionGranted && widget.latitude == null)
           ? const Center(child: CircularProgressIndicator())
           : GoogleMap(
         onMapCreated: _onMapCreated,
-        initialCameraPosition:
-        CameraPosition(target: _userPosition!, zoom: 17),
-        markers: _markers,
+        initialCameraPosition: CameraPosition(target: initialTarget, zoom: 17),
+        markers: {
+          ..._markers,
+          if (widget.latitude != null && widget.longitude != null)
+            Marker(
+              markerId: const MarkerId('alert'),
+              position: initialTarget,
+              infoWindow: const InfoWindow(title: "SOS Alert Location"),
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            ),
+        },
         circles: _circles,
         polylines: _polylines,
         myLocationEnabled: true,
