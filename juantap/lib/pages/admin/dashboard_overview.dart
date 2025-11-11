@@ -41,27 +41,35 @@ class _DashboardOverviewState extends State<DashboardOverview> {
 
   void _bindStats() {
     _usersRef.onValue.listen((e) => setState(() => _totalUsers = e.snapshot.children.length));
-    _sosRef.onValue.listen((e) => setState(() => _totalSOS = e.snapshot.children.length));
+    _sosRef.onValue.listen((e) {
+      int total = 0;
+
+      for (final userSnap in e.snapshot.children) {
+        total += userSnap.children.length;
+      }
+
+      setState(() => _totalSOS = total);
+    });
     _zonesRef.onValue.listen((e) => setState(() => _totalZones = e.snapshot.children.length));
 
     _reportsRef.onValue.listen((e) {
       final now = DateTime.now();
       int monthCount = 0;
-      for (final userSnap in e.snapshot.children) {
-        for (final reportSnap in userSnap.children) {
-          final dateStr = reportSnap.child('date').value?.toString();
-          if (dateStr != null && dateStr.contains('/')) {
+
+      for (final responderSnap in e.snapshot.children) {
+        for (final reportSnap in responderSnap.children) {
+          final timestamp = reportSnap.child('timestamp').value?.toString();
+          if (timestamp != null) {
             try {
-              final parts = dateStr.split('/');
-              if (parts.length == 3) {
-                final month = int.parse(parts[0]);
-                final year = int.parse(parts[2]);
-                if (year == now.year && month == now.month) monthCount++;
+              final reportTime = DateTime.parse(timestamp);
+              if (reportTime.year == now.year && reportTime.month == now.month) {
+                monthCount++;
               }
             } catch (_) {}
           }
         }
       }
+
       setState(() => _reportsThisMonth = monthCount);
     });
 
@@ -300,23 +308,24 @@ class _AnimatedLineChartContainerState extends State<_AnimatedLineChartContainer
   void _listenReports() {
     _subscription?.cancel();
     setState(() => _loading = true);
+
     _subscription = _reportsRef.onValue.listen((e) {
       final counts = List<int>.filled(12, 0);
-      for (final userSnap in e.snapshot.children) {
-        for (final reportSnap in userSnap.children) {
-          final dateStr = reportSnap.child('date').value?.toString();
-          if (dateStr != null && dateStr.contains('/')) {
+
+      for (final responderSnap in e.snapshot.children) {
+        for (final reportSnap in responderSnap.children) {
+          final timestamp = reportSnap.child('timestamp').value?.toString();
+          if (timestamp != null) {
             try {
-              final parts = dateStr.split('/');
-              if (parts.length == 3) {
-                final month = int.parse(parts[0]);
-                final year = int.parse(parts[2]);
-                if (year == _year && month >= 1 && month <= 12) counts[month - 1]++;
+              final reportTime = DateTime.parse(timestamp);
+              if (reportTime.year == _year && reportTime.month >= 1 && reportTime.month <= 12) {
+                counts[reportTime.month - 1]++;
               }
             } catch (_) {}
           }
         }
       }
+
       if (mounted) {
         setState(() {
           _monthlyCounts = counts;
@@ -326,6 +335,7 @@ class _AnimatedLineChartContainerState extends State<_AnimatedLineChartContainer
       }
     });
   }
+
 
   @override
   void dispose() {

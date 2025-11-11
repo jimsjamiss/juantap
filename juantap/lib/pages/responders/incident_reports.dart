@@ -324,8 +324,6 @@ class _IncidentReportsResponderState extends State<IncidentReportsResponder> {
               Icons.person, "Citizen", report['userName'] ?? "Unknown"),
           _buildInfoRow(
               Icons.badge, "Responder", report['responderName'] ?? "Unknown"),
-          _buildInfoRow(Icons.schedule, "Time Rescued",
-              report['timeRescued'] ?? "N/A"),
           _buildInfoRow(Icons.calendar_today, "Reported At",
               _formatDate(report['timestamp'])),
           _buildInfoRow(Icons.place, "Place of Incident",

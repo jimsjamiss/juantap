@@ -146,9 +146,14 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // ✅ Listen to responder_alerts (Main listener)
+  // 🧠 Keep this list at the top of your class:
+  List<Map<String, dynamic>> _alertQueue = [];
+
+
+// ✅ Listen to responder_alerts (Main listener)
   void _listenToResponderAlerts() {
     final ref = FirebaseDatabase.instance.ref('responder_alerts');
+
     ref.onChildAdded.listen((event) {
       if (!_isMounted || !event.snapshot.exists) return;
 
@@ -177,7 +182,7 @@ class _MyHomePageState extends State<MyHomePage> {
           DateTime.now().difference(timestamp).inHours >= 24) return;
 
       final alert = {
-        'alertId': alertId, // ✅ Always include alertId
+        'alertId': alertId,
         'userId': userId,
         'name': username,
         'email': email,
@@ -194,99 +199,140 @@ class _MyHomePageState extends State<MyHomePage> {
       };
 
       // Prevent duplicates
-      final exists = recentAlerts.any((a) =>
-      a['userId'] == userId && a['timestamp'] == timestampStr);
+      final exists = recentAlerts.any(
+            (a) => a['userId'] == userId && a['timestamp'] == timestampStr,
+      );
       if (exists) return;
 
       setState(() => recentAlerts.add(alert));
-      _popupActive = true;
-      _startAlertFeedback();
 
-      // ✅ Popup alert
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFFFFEAEA),
-          shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          title: Row(
-            children: [
-              CircleAvatar(
-                radius: 25,
-                backgroundImage: profileImage.isNotEmpty
-                    ? NetworkImage(profileImage)
-                    : const AssetImage('assets/shield.png') as ImageProvider,
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: Text('🚨 SOS Alert from $username')),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('📍 Location: $lat, $lng'),
-              Text('🏠 Address: $address'),
-              Text('📞 Phone: $phone'),
-              Text('📧 Email: $email'),
-              Text('🎂 Birthdate: $birthdate'),
-              Text('🌎 Nationality: $nationality'),
-              const SizedBox(height: 8),
-              const Text('Please respond immediately.'),
-            ],
-          ),
-          actions: [
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () {
-                _popupActive = false;
-                _stopAlertFeedbackImmediately();
-                Navigator.pop(context);
-              },
-              child: const Text('Dismiss'),
+      // 🟢 Queue this alert
+      _alertQueue.add(alert);
+
+      // If no popup is active, show the first in queue
+      if (!_popupActive) {
+        _showNextAlert(context);
+      }
+    });
+  }
+
+
+// ✅ Function to show next alert in queue
+  void _showNextAlert(BuildContext parentContext) {
+    if (_alertQueue.isEmpty || _popupActive) return;
+
+    final alert = _alertQueue.first;
+    _popupActive = true;
+    _startAlertFeedback();
+
+    final profileImage = alert['profileImage'] ?? '';
+    final username = alert['name'] ?? 'Unknown User';
+    final address = alert['address'] ?? '';
+    final lat = alert['latitude'] ?? 0.0;
+    final lng = alert['longitude'] ?? 0.0;
+    final phone = alert['phone'] ?? '';
+    final email = alert['email'] ?? '';
+    final birthdate = alert['birthdate'] ?? '';
+    final nationality = alert['nationality'] ?? '';
+    final alertId = alert['alertId'];
+    final userId = alert['userId'];
+
+    showDialog(
+      context: parentContext,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFFFFEAEA),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 25,
+              backgroundImage: profileImage.isNotEmpty
+                  ? NetworkImage(profileImage)
+                  : const AssetImage('assets/shield.png') as ImageProvider,
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                _popupActive = false;
-                _stopAlertFeedbackImmediately();
-                Navigator.pop(context);
+            const SizedBox(width: 12),
+            Expanded(child: Text('🚨 SOS Alert from $username')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('📍 Location: $lat, $lng'),
+            Text('🏠 Address: $address'),
+            Text('📞 Phone: $phone'),
+            Text('📧 Email: $email'),
+            Text('🎂 Birthdate: $birthdate'),
+            Text('🌎 Nationality: $nationality'),
+            const SizedBox(height: 8),
+            const Text('Please respond immediately.'),
+          ],
+        ),
+        actions: [
+          // ❌ Dismiss — show next alert
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              _stopAlertFeedbackImmediately();
+              Navigator.pop(dialogContext);
 
-                // ✅ Save responder acceptance to Firebase
-                if (user != null) {
-                  final responderRef = FirebaseDatabase.instance
-                      .ref('responder_alerts/$alertId/responders/${user!.uid}');
-                  await responderRef.set({
-                    'responderName': _username.isNotEmpty
-                        ? _username
-                        : (user!.email ?? 'Responder'),
-                    'respondedAt': DateTime.now().toIso8601String(),
-                  });
-                }
+              // Remove the dismissed alert
+              _alertQueue.removeAt(0);
 
-                Navigator.push(
-                  context,
+              // Allow next alert
+              _popupActive = false;
+              Future.delayed(const Duration(milliseconds: 200), () {
+                _showNextAlert(parentContext);
+              });
+            },
+            child: const Text('Dismiss'),
+          ),
+
+          // ✅ Accept — go to SendAlertResponsePage & clear queue
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              _stopAlertFeedbackImmediately();
+              Navigator.pop(dialogContext);
+
+              // Save acceptance
+              if (user != null) {
+                final responderRef = FirebaseDatabase.instance
+                    .ref('responder_alerts/$alertId/responders/${user!.uid}');
+                await responderRef.set({
+                  'responderName': _username.isNotEmpty
+                      ? _username
+                      : (user!.email ?? 'Responder'),
+                  'respondedAt': DateTime.now().toIso8601String(),
+                });
+              }
+
+              // 🚫 Clear all pending alerts after accepting one
+              _alertQueue.clear();
+              _popupActive = true;
+
+              if (parentContext.mounted) {
+                await Future.delayed(const Duration(milliseconds: 200));
+                Navigator.pushReplacement(
+                  parentContext,
                   MaterialPageRoute(
                     builder: (_) => SendAlertResponsePage(alertData: alert),
                   ),
                 );
-              },
-              child: const Text('Accept'),
-            ),
-          ],
-        ),
-      ).then((_) {
-        _popupActive = false;
-        _stopAlertFeedbackImmediately();
-      });
-    });
+              }
+            },
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ✅ Feedback (sound + vibration)
@@ -302,7 +348,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     _player = AudioPlayer();
     try {
-      await _player!.setSource(AssetSource('audio/bomboclat.mp3'));
+      await _player!.setSource(AssetSource('audio/security-alarm-1.mp3'));
       await _player!.setReleaseMode(ReleaseMode.loop);
       if (_popupActive) await _player!.resume();
     } catch (e) {

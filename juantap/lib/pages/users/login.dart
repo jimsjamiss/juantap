@@ -327,7 +327,7 @@ class _LoginPageState extends State<LoginPage> {
                           'Forgot Password?',
                           style: TextStyle(
                             color: Colors.white,
-                            decoration: TextDecoration.underline,
+                            decoration: TextDecoration.none,
                             fontWeight: FontWeight.w500,
                           ),
                         ),

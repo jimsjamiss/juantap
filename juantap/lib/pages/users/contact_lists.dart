@@ -472,15 +472,17 @@ class _ContactListPageState extends State<ContactListPage> {
   void _showRequestSentModal(BuildContext context, String name) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Request Sent'),
-        content: Text('Your request to "$name" has been sent successfully.'),
-        actions: [
-          TextButton(
-            child: Text('OK'),
-            onPressed: () => Navigator.pop(context),
+      barrierDismissible: true, // ✅ allows tap outside to close
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.pop(context), // ✅ tap anywhere to close
+        child: AlertDialog(
+          title: const Text('Request Sent'),
+          content: Text(
+            'Your request to "$name" has been sent successfully.\n\n'
+                '(Tap anywhere to close)',
+            style: const TextStyle(fontSize: 16),
           ),
-        ],
+        ),
       ),
     );
   }

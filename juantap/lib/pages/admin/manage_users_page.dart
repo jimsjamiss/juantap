@@ -74,12 +74,134 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
     }
   }
 
-  Future<void> _deleteUser(_UserRow row) async {
-    await _usersRef.child(row.uid).remove();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${row.role} ${row.name} deleted')),
-      );
+  /// ✅ Confirmation before deactivating / activating
+  Future<void> _confirmStatusChange(_UserRow row, String newStatus) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFAFCFF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          newStatus == 'Suspended' ? 'Confirm Deactivation' : 'Confirm Activation',
+          style: const TextStyle(
+              color: Color(0xFF084C41), fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: Text(
+          newStatus == 'Suspended'
+              ? 'Are you sure you want to deactivate "${row.name}" (${row.role})? This will temporarily disable their account.'
+              : 'Are you sure you want to activate "${row.name}" (${row.role})?',
+          style: const TextStyle(fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            onPressed: () => Navigator.pop(ctx, false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+              newStatus == 'Suspended' ? Colors.orange : Colors.green,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text(newStatus == 'Suspended' ? 'Deactivate' : 'Activate'),
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _updateStatus(row, newStatus);
+    }
+  }
+
+  /// ✅ Confirmation before deleting user
+  Future<void> _confirmDeleteUser(_UserRow row) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFAFCFF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Confirm Removing Account',
+          style: TextStyle(
+              color: Color(0xFF084C41), fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: Text(
+          'Are you sure you want to permanently remove "${row.name}" (${row.role})?',
+          style: const TextStyle(fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            onPressed: () => Navigator.pop(ctx, false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Remove'),
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _usersRef.child(row.uid).remove();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${row.role} ${row.name} removed ✅')),
+        );
+      }
+    }
+  }
+
+  /// ✅ Confirmation before sending password reset
+  Future<void> _confirmResetPassword(_UserRow row) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFAFCFF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Send Password Reset Email?',
+          style: TextStyle(
+              color: Color(0xFF084C41), fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: Text(
+          'Are you sure you want to send a password reset link to "${row.email}"?',
+          style: const TextStyle(fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            onPressed: () => Navigator.pop(ctx, false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E88E5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Send'),
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await FirebaseAuth.instance.sendPasswordResetEmail(email: row.email);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Password reset email sent to ${row.email} ✅')),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     }
   }
 
@@ -234,7 +356,6 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 🔹 Header with button
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -251,7 +372,8 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
                     label: const Text("Create Responder"),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1E88E5),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -267,29 +389,16 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
                 child: Card(
                   color: const Color(0xFFFAFCFF),
                   elevation: 6,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: _UsersDataTable(
                       rows: _filtered,
-                      onSuspend: (r) => _updateStatus(r, 'Suspended'),
-                      onActivate: (r) => _updateStatus(r, 'Active'),
-                      onDelete: _deleteUser,
-                      onResetPassword: (r) async {
-                        try {
-                          await FirebaseAuth.instance
-                              .sendPasswordResetEmail(email: r.email);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                                content: Text(
-                                    'Password reset email sent to ${r.email} ✅')),
-                          );
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Error: $e')),
-                          );
-                        }
-                      },
+                      onSuspend: (r) => _confirmStatusChange(r, 'Suspended'),
+                      onActivate: (r) => _confirmStatusChange(r, 'Active'),
+                      onDelete: _confirmDeleteUser,
+                      onResetPassword: _confirmResetPassword,
                     ),
                   ),
                 ),
@@ -347,7 +456,7 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
   }
 }
 
-// -------------------- Data Table --------------------
+// -------------------- Data Table & Source --------------------
 class _UsersDataTable extends StatelessWidget {
   final List<_UserRow> rows;
   final void Function(_UserRow) onSuspend;
@@ -394,11 +503,36 @@ class _UsersDataTable extends StatelessWidget {
                   headingRowColor:
                   WidgetStateProperty.all(const Color(0xFFD7F9E9)),
                   columns: [
-                    DataColumn(label: SizedBox(width: nameWidth, child: const Text('Name', style: TextStyle(fontWeight: FontWeight.bold)))),
-                    DataColumn(label: SizedBox(width: emailWidth, child: const Text('Email', style: TextStyle(fontWeight: FontWeight.bold)))),
-                    DataColumn(label: SizedBox(width: roleWidth, child: const Text('Role', style: TextStyle(fontWeight: FontWeight.bold)))),
-                    DataColumn(label: SizedBox(width: statusWidth, child: const Text('Status', style: TextStyle(fontWeight: FontWeight.bold)))),
-                    DataColumn(label: SizedBox(width: actionsWidth, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold)))),
+                    DataColumn(
+                        label: SizedBox(
+                            width: nameWidth,
+                            child: const Text('Name',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold)))),
+                    DataColumn(
+                        label: SizedBox(
+                            width: emailWidth,
+                            child: const Text('Email',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold)))),
+                    DataColumn(
+                        label: SizedBox(
+                            width: roleWidth,
+                            child: const Text('Role',
+                                style:
+                                TextStyle(fontWeight: FontWeight.bold)))),
+                    DataColumn(
+                        label: SizedBox(
+                            width: statusWidth,
+                            child: const Text('Status',
+                                style:
+                                TextStyle(fontWeight: FontWeight.bold)))),
+                    DataColumn(
+                        label: SizedBox(
+                            width: actionsWidth,
+                            child: const Text('Actions',
+                                style:
+                                TextStyle(fontWeight: FontWeight.bold)))),
                   ],
                   source: _UsersSource(
                     rows,
@@ -406,7 +540,13 @@ class _UsersDataTable extends StatelessWidget {
                     onActivate,
                     onDelete,
                     onResetPassword,
-                    widths: [nameWidth, emailWidth, roleWidth, statusWidth, actionsWidth],
+                    widths: [
+                      nameWidth,
+                      emailWidth,
+                      roleWidth,
+                      statusWidth,
+                      actionsWidth
+                    ],
                   ),
                 );
               },
@@ -443,7 +583,8 @@ class _UsersDataTable extends StatelessWidget {
         Icon(Icons.circle, color: color, size: 10),
         const SizedBox(width: 6),
         Text("$label: ",
-            style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF084C41))),
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, color: Color(0xFF084C41))),
         Text(value.toString(),
             style: TextStyle(fontWeight: FontWeight.bold, color: color)),
       ],
@@ -451,7 +592,6 @@ class _UsersDataTable extends StatelessWidget {
   }
 }
 
-// -------------------- Table Source --------------------
 class _UsersSource extends DataTableSource {
   final List<_UserRow> rows;
   final void Function(_UserRow) onSuspend;
@@ -460,7 +600,8 @@ class _UsersSource extends DataTableSource {
   final void Function(_UserRow) onResetPassword;
   final List<double> widths;
 
-  _UsersSource(this.rows, this.onSuspend, this.onActivate, this.onDelete, this.onResetPassword,
+  _UsersSource(this.rows, this.onSuspend, this.onActivate, this.onDelete,
+      this.onResetPassword,
       {required this.widths});
 
   @override
@@ -496,12 +637,16 @@ class _UsersSource extends DataTableSource {
                   r.status == 'Active'
                       ? Icons.pause_circle_outline
                       : Icons.play_circle_outline,
-                  color: r.status == 'Active' ? Colors.orange : Colors.green,
+                  color:
+                  r.status == 'Active' ? Colors.orange : Colors.green,
                 ),
-                onPressed: () => r.status == 'Active' ? onSuspend(r) : onActivate(r),
+                onPressed: () => r.status == 'Active'
+                    ? onSuspend(r)
+                    : onActivate(r),
               ),
               IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                icon: const Icon(Icons.delete_outline,
+                    color: Colors.redAccent),
                 onPressed: () => onDelete(r),
               ),
             ],

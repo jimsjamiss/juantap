@@ -251,127 +251,167 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                   fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF25C09C), Color(0xFF2ECC71), Color(0xFFFF6B6B)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.25),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(50),
-                        child: Image.network(
-                          _profileImage ?? 'https://i.imgur.com/8Km9tLL.jpg',
-                          width: 70,
-                          height: 70,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                          const Icon(Icons.person, color: Colors.white, size: 60),
-                        ),
+            Center(
+              child: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.95, // ✅ Match modal width
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF25C09C), Color(0xFF2ECC71), Color(0xFFFF6B6B)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(25),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
                       ),
-                      const SizedBox(width: 15),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(widget.userName,
-                                style: const TextStyle(
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      // 🧍 User info row
+                      Row(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(50),
+                            child: Image.network(
+                              _profileImage ?? 'https://i.imgur.com/8Km9tLL.jpg',
+                              width: 70,
+                              height: 70,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.person,
+                                color: Colors.white,
+                                size: 60,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 15),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.userName,
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 20,
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 4),
-                            if (_travelTimeMinutes != null && _travelDistanceKm != null)
-                              Text(
-                                "ETA: ${_formatTravelTime(_travelTimeMinutes!)}  •  ${_travelDistanceKm!.toStringAsFixed(2)} km away",
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                if (_travelTimeMinutes != null && _travelDistanceKm != null)
+                                  Text(
+                                    "ETA: ${_formatTravelTime(_travelTimeMinutes!)}  •  ${_travelDistanceKm!.toStringAsFixed(2)} km away",
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // 🗺️ Google Map Section
+                      Stack(
+                        children: [
+                          Container(
+                            height: 280,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: GoogleMap(
+                              initialCameraPosition: CameraPosition(
+                                target: _userLocation,
+                                zoom: 15,
                               ),
-                          ],
-                        ),
+                              onMapCreated: (controller) => _mapController = controller,
+                              markers: _markers,
+                              polylines: _polylines,
+                              myLocationEnabled: true,
+                              myLocationButtonEnabled: true,
+                              compassEnabled: true,
+                            ),
+                          ),
+                          if (_isLoadingRoute)
+                            const Positioned.fill(
+                              child: Center(
+                                child: CircularProgressIndicator(color: Color(0xFF2ECC71)),
+                              ),
+                            ),
+                        ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Stack(
-                    children: [
+
+                      const SizedBox(height: 12),
+
+                      // 🧭 Route instruction card
                       Container(
-                        height: 280,
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
+                          color: Colors.white.withOpacity(0.95),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        child: GoogleMap(
-                          initialCameraPosition: CameraPosition(target: _userLocation, zoom: 15),
-                          onMapCreated: (controller) => _mapController = controller,
-                          markers: _markers,
-                          polylines: _polylines,
-                          myLocationEnabled: true,
-                          myLocationButtonEnabled: true,
-                          compassEnabled: true,
-                        ),
-                      ),
-                      if (_isLoadingRoute)
-                        const Positioned.fill(
-                          child: Center(
-                            child: CircularProgressIndicator(color: Color(0xFF2ECC71)),
+                        child: const Text(
+                          'Follow the blue route to reach the user, similar to navigation apps.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.black87,
+                            height: 1.4,
                           ),
                         ),
+                      ),
+
+                      const SizedBox(height: 25),
+
+                      // 📝 Action Report Button
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => IncidentReportPage(
+                                userId: widget.userId,
+                                userName: widget.userName,
+                                responderLocation: _responderLocation,
+                              ),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1E8449),
+                          padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          elevation: 6,
+                        ),
+                        icon: const Icon(Icons.report, color: Colors.white),
+                        label: const Text(
+                          "Action Report",
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.95),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Text(
-                      'Follow the blue route to reach the user like navigation apps.',
-                      style: TextStyle(fontSize: 13, color: Colors.black87),
-                    ),
-                  ),
-                  const SizedBox(height: 25),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (_) => IncidentReportPopup(
-                          userId: widget.userId,
-                          userName: widget.userName,
-                          responderLocation: _responderLocation,
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF28A361),
-                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                    ),
-                    icon: const Icon(Icons.report, color: Colors.white),
-                    label: const Text(
-                      "Action Report",
-                      style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
+
           ],
         ),
       ),

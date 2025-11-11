@@ -115,15 +115,27 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      info['profileImage'] ??
-                          'https://via.placeholder.com/70',
+                    child: (info['profileImage'] != null && info['profileImage'].toString().isNotEmpty)
+                        ? Image.network(
+                      info['profileImage'],
                       width: 70,
                       height: 70,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                      const Icon(Icons.error,
-                          color: Colors.white),
+                      errorBuilder: (_, __, ___) {
+                        // If the Firebase image URL fails to load, fallback to default asset
+                        return Image.asset(
+                          'assets/images/user_profile.png',
+                          width: 70,
+                          height: 70,
+                          fit: BoxFit.cover,
+                        );
+                      },
+                    )
+                        : Image.asset(
+                      'assets/images/user_profile.png',
+                      width: 70,
+                      height: 70,
+                      fit: BoxFit.cover,
                     ),
                   ),
                   const SizedBox(width: 12),

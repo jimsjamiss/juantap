@@ -7,7 +7,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:juantap/pages/responders/responder.dart';
 
-
 class EditResponderProfilePage extends StatefulWidget {
   const EditResponderProfilePage({super.key});
 
@@ -22,15 +21,11 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _addressController = TextEditingController();
-  final _currentPasswordController = TextEditingController();
-  final _newPasswordController = TextEditingController();
 
   final _user = FirebaseAuth.instance.currentUser;
   File? _selectedImage;
   String? _profileImageUrl;
   bool _isSaving = false;
-  bool _obscureCurrent = true;
-  bool _obscureNew = true;
 
   @override
   void initState() {
@@ -117,55 +112,73 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
     }
   }
 
-  Future<void> _changePassword() async {
-    final currentPassword = _currentPasswordController.text.trim();
-    final newPassword = _newPasswordController.text.trim();
+  // 🟡 Show Reset Password Modal
+  void _showPasswordResetModal() {
+    final emailController = TextEditingController(text: _emailController.text);
 
-    if (currentPassword.isEmpty || newPassword.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill out both password fields.')),
-      );
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('New password must be at least 6 characters.')),
-      );
-      return;
-    }
-
-    try {
-      final cred = EmailAuthProvider.credential(
-        email: _user!.email!,
-        password: currentPassword,
-      );
-      await _user!.reauthenticateWithCredential(cred);
-      await _user!.updatePassword(newPassword);
-
-      _currentPasswordController.clear();
-      _newPasswordController.clear();
-
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Password Changed'),
-            content: const Text('Your password has been successfully updated.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK', style: TextStyle(color: Colors.green)),
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Enter your email address below to receive a password reset link.',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
               ),
-            ],
+              keyboardType: TextInputType.emailAddress,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to change password: $e')),
-      );
-    }
+          ElevatedButton(
+            onPressed: () async {
+              final email = emailController.text.trim();
+              if (email.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter your email address.')),
+                );
+                return;
+              }
+
+              try {
+                await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Email Sent'),
+                      content: Text('A password reset link has been sent to $email.'),
+                    ),
+                  );
+                }
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Failed to send reset email: $e')),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF417B63),
+            ),
+            child: const Text('Send Link', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -184,7 +197,6 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                     IconButton(
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
                       onPressed: () {
-                        // ✅ Smooth back navigation
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(builder: (_) => const ResponderDashboard()),
@@ -253,7 +265,6 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                 _buildInputField(_addressController, 'Address'),
 
                 const SizedBox(height: 25),
-                // ✅ Save button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -265,14 +276,17 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                         barrierDismissible: false,
                         builder: (context) => AlertDialog(
                           title: const Text('Confirm Changes'),
-                          content: const Text('Save your updated responder profile?'),
+                          content: const Text(
+                              'Save your updated responder profile?'),
                           actions: [
                             TextButton(
-                              onPressed: () => Navigator.pop(context, false),
+                              onPressed: () =>
+                                  Navigator.pop(context, false),
                               child: const Text('Cancel'),
                             ),
                             ElevatedButton(
-                              onPressed: () => Navigator.pop(context, true),
+                              onPressed: () =>
+                                  Navigator.pop(context, true),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF417B63),
                               ),
@@ -295,7 +309,8 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                         ? const CircularProgressIndicator(color: Colors.black)
                         : const Text('Save',
                         style: TextStyle(
-                            color: Colors.black, fontWeight: FontWeight.bold)),
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold)),
                   ),
                 ),
 
@@ -309,26 +324,10 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
                           fontSize: 16)),
                 ),
                 const SizedBox(height: 12),
-                _buildPasswordField(
-                  controller: _currentPasswordController,
-                  label: 'Current Password',
-                  obscure: _obscureCurrent,
-                  toggle: () =>
-                      setState(() => _obscureCurrent = !_obscureCurrent),
-                ),
-                _buildPasswordField(
-                  controller: _newPasswordController,
-                  label: 'New Password',
-                  obscure: _obscureNew,
-                  toggle: () => setState(() => _obscureNew = !_obscureNew),
-                ),
-
-                const SizedBox(height: 12),
-                // ✅ Change Password Button now matches Save Button color
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _changePassword,
+                    onPressed: _showPasswordResetModal,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFF7F6D9),
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -368,35 +367,6 @@ class _EditResponderProfilePageState extends State<EditResponderProfilePage> {
           filled: true,
           fillColor: Colors.white,
           labelText: label,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPasswordField({
-    required TextEditingController controller,
-    required String label,
-    required bool obscure,
-    required VoidCallback toggle,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: TextFormField(
-        controller: controller,
-        obscureText: obscure,
-        style: const TextStyle(color: Colors.black),
-        decoration: InputDecoration(
-          filled: true,
-          fillColor: Colors.white,
-          labelText: label,
-          suffixIcon: IconButton(
-            icon: Icon(
-              obscure ? Icons.visibility_off : Icons.visibility,
-              color: Colors.grey,
-            ),
-            onPressed: toggle,
-          ),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),

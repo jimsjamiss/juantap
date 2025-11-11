@@ -1,8 +1,10 @@
-// 📦 Full updated IncidentReportsPage — with live Web Map centered on report location
+// 📦 Full updated IncidentReportsPage — with DateTime modal, Status Filter, and Delete Button UI Update
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'web_live_map.dart'; // ✅ Import your real-time web map widget
+import 'package:intl/intl.dart';
+
 
 class IncidentReportsPage extends StatefulWidget {
   const IncidentReportsPage({super.key});
@@ -16,7 +18,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
   List<_ReportRow> _rows = [];
   bool _loading = true;
   DateTimeRange? _range;
-  String _statusFilter = 'All';
+  String _statusFilter = 'All'; // ✅ new status filter
 
   @override
   void initState() {
@@ -28,19 +30,37 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
   void _bind() {
     _reportsRef.onValue.listen((event) {
       final tmp = <_ReportRow>[];
+
       for (final responderSnapshot in event.snapshot.children) {
         final responderId = responderSnapshot.key ?? '';
+
         for (final reportSnapshot in responderSnapshot.children) {
           final reportId = reportSnapshot.key ?? '';
           final data = Map<String, dynamic>.from(reportSnapshot.value as Map);
+
+          // ✅ Match responder’s saved data structure
+          final timestamp = data['timestamp'];
+          DateTime? parsedTime;
+          if (timestamp != null) {
+            try {
+              parsedTime = DateTime.parse(timestamp);
+            } catch (_) {}
+          }
+
           tmp.add(_ReportRow(
             responderId: responderId,
             reportId: reportId,
-            date: data['date'] ?? 'Unknown',
-            time: data['time'] ?? 'Unknown',
-            description: data['description'] ?? 'No description',
-            location: data['location'] ?? 'Unknown',
-            status: data['status'] ?? 'Pending',
+            date: parsedTime != null
+                ? "${parsedTime.month}/${parsedTime.day}/${parsedTime.year}"
+                : 'Unknown',
+            time: parsedTime != null
+                ? DateFormat('h:mm a').format(parsedTime)
+                : 'Unknown',
+            description: data['actionStory'] ?? 'No details provided',
+            location: data['placeOfIncident'] ?? 'Unknown',
+            status: (data['resolved'] == 'Yes')
+                ? 'Resolved'
+                : (data['resolved'] == 'No' ? 'Pending' : 'Pending'),
             lat: (data['latitude'] != null)
                 ? (data['latitude'] as num).toDouble()
                 : null,
@@ -50,12 +70,14 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
           ));
         }
       }
+
       setState(() {
         _rows = tmp.reversed.toList();
         _loading = false;
       });
     });
   }
+
 
   List<_ReportRow> get _filtered {
     List<_ReportRow> filtered = _rows;
@@ -85,14 +107,152 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
     return filtered;
   }
 
+  // 🕓 Custom Date-Time modal picker
   Future<void> _pickRange() async {
-    final now = DateTime.now();
-    final picked = await showDateRangePicker(
+    DateTime? start;
+    DateTime? end;
+
+    await showDialog(
       context: context,
-      firstDate: DateTime(now.year - 2),
-      lastDate: DateTime(now.year + 1),
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFFAFCFF),
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text(
+            'Select Date & Time Range',
+            style: TextStyle(
+              color: Color(0xFF084C41),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _dateTimeField(
+                    label: 'Start Date & Time',
+                    selected: start,
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2023),
+                        lastDate: DateTime(2030),
+                      );
+                      if (date != null) {
+                        final time = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay.now(),
+                        );
+                        if (time != null) {
+                          setState(() {
+                            start = DateTime(
+                              date.year,
+                              date.month,
+                              date.day,
+                              time.hour,
+                              time.minute,
+                            );
+                          });
+                        }
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _dateTimeField(
+                    label: 'End Date & Time',
+                    selected: end,
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2023),
+                        lastDate: DateTime(2030),
+                      );
+                      if (date != null) {
+                        final time = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay.now(),
+                        );
+                        if (time != null) {
+                          setState(() {
+                            end = DateTime(
+                              date.year,
+                              date.month,
+                              date.day,
+                              time.hour,
+                              time.minute,
+                            );
+                          });
+                        }
+                      }
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child:
+              const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1E88E5),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                if (start != null && end != null) {
+                  setState(() {
+                    _range = DateTimeRange(start: start!, end: end!);
+                  });
+                }
+                Navigator.pop(ctx);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        );
+      },
     );
-    if (picked != null) setState(() => _range = picked);
+  }
+
+  Widget _dateTimeField({
+    required String label,
+    required DateTime? selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade300),
+          color: Colors.white,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              selected != null
+                  ? '${selected.month}/${selected.day}/${selected.year}  ${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}'
+                  : label,
+              style: TextStyle(
+                color: selected != null ? Colors.black : Colors.grey.shade500,
+              ),
+            ),
+            const Icon(Icons.access_time, color: Color(0xFF1E88E5)),
+          ],
+        ),
+      ),
+    );
   }
 
   Color _statusColor(String status) {
@@ -103,6 +263,35 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
         return const Color(0xFF1E88E5);
       default:
         return const Color(0xFFFFA726);
+    }
+  }
+
+  // 🗑 Delete confirmation logic
+  Future<void> _confirmDelete(_ReportRow r) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirm Deletion'),
+        content: Text(
+            'Are you sure you want to delete Report #${r.reportId.substring(0, 6)}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await _reportsRef.child(r.responderId).child(r.reportId).remove();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Report deleted successfully'),
+      ));
     }
   }
 
@@ -172,6 +361,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
     );
   }
 
+  /// 🔍 Filter Bar with Date and Status
   Widget _buildFilterBar() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -190,9 +380,9 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
         children: [
           ElevatedButton.icon(
             onPressed: _pickRange,
-            icon: const Icon(Icons.date_range, color: Colors.white),
+            icon: const Icon(Icons.calendar_today, color: Colors.white),
             label: const Text(
-              'Filter by date',
+              'Filter by Date & Time',
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: Colors.white,
@@ -206,6 +396,20 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
               padding:
               const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
             ),
+          ),
+          const SizedBox(width: 12),
+          DropdownButton<String>(
+            value: _statusFilter,
+            underline: const SizedBox(),
+            borderRadius: BorderRadius.circular(10),
+            items: const [
+              DropdownMenuItem(value: 'All', child: Text('All Status')),
+              DropdownMenuItem(value: 'Pending', child: Text('Pending')),
+              DropdownMenuItem(
+                  value: 'In_Progress', child: Text('In Progress')),
+              DropdownMenuItem(value: 'Resolved', child: Text('Resolved')),
+            ],
+            onChanged: (v) => setState(() => _statusFilter = v ?? 'All'),
           ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
@@ -261,13 +465,6 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
           decoration: BoxDecoration(
             color: _statusColor(r.status),
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: _statusColor(r.status).withOpacity(0.4),
-                blurRadius: 6,
-                offset: const Offset(2, 3),
-              ),
-            ],
           ),
           child: const Icon(Icons.notes_rounded, color: Colors.white),
         ),
@@ -281,54 +478,73 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
         ),
         subtitle: Text(
           '${r.location}\n${r.date} • ${r.time}',
-          style: const TextStyle(
-            color: Colors.black87,
-            height: 1.4,
-            fontSize: 13,
-          ),
+          style: const TextStyle(color: Colors.black87, height: 1.4),
         ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _statusColor(r.status).withOpacity(0.1),
-                border: Border.all(
-                  color: _statusColor(r.status).withOpacity(0.3),
+
+        // 🔧 Updated trailing layout: centered View Map & Status + Delete Icon on right
+        trailing: SizedBox(
+          width: 160,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _statusColor(r.status).withOpacity(0.1),
+                        border: Border.all(
+                          color: _statusColor(r.status).withOpacity(0.3),
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        r.status.toUpperCase(),
+                        style: TextStyle(
+                          color: _statusColor(r.status),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton.icon(
+                      icon: Icon(
+                        Icons.location_on_rounded,
+                        size: 16,
+                        color: r.status.toLowerCase() == 'resolved'
+                            ? Colors.green
+                            : r.status.toLowerCase() == 'in_progress'
+                            ? Colors.blueAccent
+                            : Colors.orange,
+                      ),
+                      label: const Text('View Map', style: TextStyle(fontSize: 11)),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        foregroundColor: Colors.teal.shade700,
+                      ),
+                      onPressed: () => _showMapDialog(r),
+                    ),
+                  ],
                 ),
-                borderRadius: BorderRadius.circular(20),
               ),
-              child: Text(
-                r.status.toUpperCase(),
-                style: TextStyle(
-                  color: _statusColor(r.status),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                onPressed: () => _confirmDelete(r),
               ),
-            ),
-            const SizedBox(height: 4),
-            TextButton.icon(
-              icon: const Icon(Icons.map_outlined, size: 14),
-              label:
-              const Text('View Map', style: TextStyle(fontSize: 11)),
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                foregroundColor: Colors.teal.shade700,
-              ),
-              onPressed: () => _showMapDialog(r),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // 🧾 Report Details Dialog — uses live map centered on report location
+  // 📋 Report Details Dialog
   void _showReportDetails(_ReportRow r) {
     showDialog(
       context: context,
@@ -346,29 +562,14 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.greenAccent.withOpacity(0.15),
-                blurRadius: 18,
-                offset: const Offset(4, 6),
-              ),
-            ],
           ),
           child: Row(
             children: [
-              // ✅ Live map focuses on specific report coordinates
               Expanded(
                 flex: 1,
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: WebLiveMap(
-                    centerLat: r.lat,
-                    centerLng: r.lng,
-                  ),
-                ),
+                child:
+                Padding(padding: const EdgeInsets.all(20), child: WebLiveMap(centerLat: r.lat, centerLng: r.lng)),
               ),
-
-              // 🧾 Right side info
               Expanded(
                 flex: 1,
                 child: Padding(
@@ -404,17 +605,8 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 20, vertical: 10),
                         decoration: BoxDecoration(
-                          color:
-                          _statusColor(r.status).withOpacity(0.15),
+                          color: _statusColor(r.status).withOpacity(0.15),
                           borderRadius: BorderRadius.circular(40),
-                          boxShadow: [
-                            BoxShadow(
-                              color:
-                              _statusColor(r.status).withOpacity(0.3),
-                              blurRadius: 10,
-                              offset: const Offset(2, 4),
-                            ),
-                          ],
                         ),
                         child: Text(
                           r.status.toUpperCase(),
@@ -432,25 +624,12 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
                           onPressed: () => Navigator.pop(context),
                           icon: const Icon(Icons.close_rounded,
                               color: Colors.white, size: 22),
-                          label: const Text(
-                            "Close",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
-                          ),
+                          label: const Text("Close"),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF1E88E5),
-                            foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(40),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 30, vertical: 16),
-                            elevation: 6,
-                            shadowColor:
-                            const Color(0xFF1E88E5).withOpacity(0.4),
+                                borderRadius:
+                                BorderRadius.circular(40)),
                           ),
                         ),
                       ),
@@ -476,9 +655,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
             TextSpan(
               text: '$label: ',
               style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
+                  fontWeight: FontWeight.bold, color: Colors.black),
             ),
             TextSpan(text: value.isNotEmpty ? value : '-'),
           ],
@@ -489,18 +666,29 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
 
   void _showMapDialog(_ReportRow r) {
     if (r.lat == null || r.lng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("No map location available for this report."),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("No map location available for this report."),
+      ));
       return;
     }
+
+    // ✅ Choose pin color based on status
+    BitmapDescriptor pinColor;
+    switch (r.status.toLowerCase()) {
+      case 'resolved':
+        pinColor = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
+        break;
+      case 'in_progress':
+        pinColor = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
+        break;
+      default:
+        pinColor = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
+    }
+
     showDialog(
       context: context,
       builder: (_) => Dialog(
-        shape:
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: SizedBox(
           height: 300,
           width: 350,
@@ -513,9 +701,13 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
               ),
               markers: {
                 Marker(
-                  markerId: const MarkerId('report'),
+                  markerId: MarkerId('report_${r.reportId}'),
                   position: LatLng(r.lat!, r.lng!),
-                  infoWindow: InfoWindow(title: r.location),
+                  icon: pinColor,
+                  infoWindow: InfoWindow(
+                    title: r.location,
+                    snippet: '${r.status.toUpperCase()} • ${r.date} ${r.time}',
+                  ),
                 ),
               },
             ),
@@ -524,6 +716,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
       ),
     );
   }
+
 }
 
 // -------------------- Model --------------------

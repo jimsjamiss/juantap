@@ -68,7 +68,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
     if (picked != null) {
       setState(() {
-        _birthdateController.text = "${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
+        _birthdateController.text =
+        "${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
       });
     }
   }
@@ -77,7 +78,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
     const cloudName = 'dfop0muxq';
     const uploadPreset = 'juantap_images';
 
-    final url = Uri.parse("https://api.cloudinary.com/v1_1/$cloudName/image/upload");
+    final url =
+    Uri.parse("https://api.cloudinary.com/v1_1/$cloudName/image/upload");
 
     final request = http.MultipartRequest('POST', url)
       ..fields['upload_preset'] = uploadPreset
@@ -131,6 +133,125 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
   }
 
+  Future<void> _showChangePasswordDialog() async {
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool isProcessing = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setStateDialog) {
+          return AlertDialog(
+            shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Change Password'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: currentController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Current Password',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: newController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'New Password',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: confirmController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm New Password',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF417B63),
+                ),
+                onPressed: isProcessing
+                    ? null
+                    : () async {
+                  final currentPassword = currentController.text.trim();
+                  final newPassword = newController.text.trim();
+                  final confirmPassword = confirmController.text.trim();
+
+                  if (newPassword != confirmPassword) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content:
+                          Text('New passwords do not match.')),
+                    );
+                    return;
+                  }
+                  if (newPassword.length < 6) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text(
+                              'Password must be at least 6 characters.')),
+                    );
+                    return;
+                  }
+
+                  setStateDialog(() => isProcessing = true);
+                  try {
+                    final cred = EmailAuthProvider.credential(
+                      email: _user!.email!,
+                      password: currentPassword,
+                    );
+                    await _user!.reauthenticateWithCredential(cred);
+                    await _user!.updatePassword(newPassword);
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Password updated successfully!')),
+                    );
+                    Navigator.pop(context);
+                  } on FirebaseAuthException catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: ${e.message}')),
+                    );
+                  } finally {
+                    setStateDialog(() => isProcessing = false);
+                  }
+                },
+                child: isProcessing
+                    ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(color: Colors.white),
+                )
+                    : const Text('Confirm',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
   Future<void> _logout() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -172,13 +293,17 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
+                      onPressed: () =>
+                          Navigator.pushReplacementNamed(context, '/home'),
                     ),
                     const Expanded(
                       child: Center(
                         child: Text(
                           'Edit Profile',
-                          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -195,7 +320,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
                           ? FileImage(_selectedImage!)
                           : (_profileImageUrl != null
                           ? NetworkImage(_profileImageUrl!)
-                          : const AssetImage('assets/user_profile.png')) as ImageProvider,
+                          : const AssetImage('assets/user_profile.png'))
+                      as ImageProvider,
                     ),
                     Positioned(
                       bottom: 0,
@@ -217,39 +343,74 @@ class _EditProfilePageState extends State<EditProfilePage> {
                 const SizedBox(height: 20),
                 const Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('Your Information', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  child: Text('Your Information',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
                 ),
                 const SizedBox(height: 12),
                 _buildInputField(_nameController, 'Name'),
-                _buildDatePicker(_birthdateController, 'Birthdate', onTap: _pickDate),
+                _buildDatePicker(_birthdateController, 'Birthdate',
+                    onTap: _pickDate),
                 _buildInputField(_nationalityController, 'Nationality'),
-                _buildInputField(_phoneController, 'Mobile', keyboardType: TextInputType.phone),
+                _buildInputField(_phoneController, 'Mobile',
+                    keyboardType: TextInputType.phone),
                 _buildInputField(_emailController, 'E-mail', readOnly: true),
                 _buildInputField(_addressController, 'Current Address'),
                 const SizedBox(height: 20),
+
+                // Change Password Button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _showChangePasswordDialog,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                    child: const Text(
+                      'Change Password',
+                      style: TextStyle(
+                          color: Color(0xFF417B63),
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
 
                 // Save Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _isSaving ? null : () async {
+                    onPressed: _isSaving
+                        ? null
+                        : () async {
                       final confirmed = await showDialog<bool>(
                         context: context,
                         barrierDismissible: false,
                         builder: (context) => AlertDialog(
                           title: const Text('Confirm Changes'),
-                          content: const Text('Are you sure you want to save your profile changes?'),
+                          content: const Text(
+                              'Are you sure you want to save your profile changes?'),
                           actions: [
                             TextButton(
-                              onPressed: () => Navigator.pop(context, false),
+                              onPressed: () =>
+                                  Navigator.pop(context, false),
                               child: const Text('Cancel'),
                             ),
                             ElevatedButton(
-                              onPressed: () => Navigator.pop(context, true),
+                              onPressed: () =>
+                                  Navigator.pop(context, true),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF417B63),
+                                backgroundColor:
+                                const Color(0xFF417B63),
                               ),
-                              child: const Text('Yes', style: TextStyle(color: Colors.white)),
+                              child: const Text('Yes',
+                                  style: TextStyle(color: Colors.white)),
                             ),
                           ],
                         ),
@@ -268,10 +429,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     ),
                     child: _isSaving
                         ? const CircularProgressIndicator(color: Colors.black)
-                        : const Text('Save', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                        : const Text('Save',
+                        style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold)),
                   ),
                 ),
-
                 const SizedBox(height: 20),
               ],
             ),
@@ -289,7 +452,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
         controller: controller,
         readOnly: readOnly,
         keyboardType: keyboardType,
-        validator: (value) => value == null || value.isEmpty ? 'Enter $label' : null,
+        validator: (value) =>
+        value == null || value.isEmpty ? 'Enter $label' : null,
         style: const TextStyle(color: Colors.black),
         decoration: InputDecoration(
           filled: true,
@@ -301,7 +465,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
-  Widget _buildDatePicker(TextEditingController controller, String label, {VoidCallback? onTap}) {
+  Widget _buildDatePicker(TextEditingController controller, String label,
+      {VoidCallback? onTap}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: TextFormField(

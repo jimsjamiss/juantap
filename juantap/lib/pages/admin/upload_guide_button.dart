@@ -223,27 +223,64 @@ class _UploadGuideButtonState extends State<UploadGuideButton> {
                             ? newCategoryCtrl.text.trim()
                             : selectedCategory;
 
-                        if (title.isEmpty ||
-                            desc.isEmpty ||
-                            link.isEmpty ||
-                            category.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text("Please fill in all fields.")),
+                        // 🚨 Validation for empty fields
+                        if (title.isEmpty || desc.isEmpty || link.isEmpty || category.isEmpty) {
+                          showDialog(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Row(
+                                children: [
+                                  Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                                  SizedBox(width: 8),
+                                  Text("Incomplete Information"),
+                                ],
+                              ),
+                              content: const Text(
+                                "Please fill out all fields before uploading the guide.",
+                                style: TextStyle(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.all(Radius.circular(16))),
+                            ),
                           );
+
+                          // Close the reminder automatically after 2 seconds
+                          Future.delayed(const Duration(seconds: 2), () {
+                            if (Navigator.canPop(context)) Navigator.pop(context);
+                          });
                           return;
                         }
 
-                        if (!link.contains("youtube.com") &&
-                            !link.contains("youtu.be")) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text(
-                                    "Please enter a valid YouTube link.")),
+                        // 🚨 Validation for YouTube link
+                        if (!link.contains("youtube.com") && !link.contains("youtu.be")) {
+                          showDialog(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Row(
+                                children: [
+                                  Icon(Icons.link_off_rounded, color: Colors.redAccent),
+                                  SizedBox(width: 8),
+                                  Text("Invalid Link"),
+                                ],
+                              ),
+                              content: const Text(
+                                "Please enter a valid YouTube link before uploading.",
+                                style: TextStyle(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.all(Radius.circular(16))),
+                            ),
                           );
+
+                          Future.delayed(const Duration(seconds: 2), () {
+                            if (Navigator.canPop(context)) Navigator.pop(context);
+                          });
                           return;
                         }
 
+                        // ✅ Proceed with upload
                         final id = widget.guidesRef.push().key!;
                         await widget.guidesRef.child(id).set({
                           'title': title,
@@ -256,8 +293,9 @@ class _UploadGuideButtonState extends State<UploadGuideButton> {
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                              content: Text(
-                                  "✅ Guide uploaded successfully under '$category'")),
+                            content: Text("✅ Guide uploaded successfully under '$category'"),
+                            backgroundColor: Colors.green.shade600,
+                          ),
                         );
                       },
                       icon: const Icon(Icons.cloud_upload_rounded),
@@ -265,12 +303,11 @@ class _UploadGuideButtonState extends State<UploadGuideButton> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF38EF7D),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
+
                   ],
                 );
               },

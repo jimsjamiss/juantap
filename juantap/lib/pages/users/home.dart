@@ -412,7 +412,8 @@ class _HomePageState extends State<HomePage>
 
   // ===================== Notifications (Contact Requests Only) ==================
   // ===================== Notifications (Contact Requests + Recent SOS Alerts) ======================
-  void _showNotificationMenu(BuildContext context) async {
+  Future<void> _showNotificationMenu(BuildContext context) async {
+    if (!mounted) return;
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) return;
 
@@ -664,14 +665,42 @@ class _HomePageState extends State<HomePage>
                     style: TextStyle(color: Colors.redAccent, fontSize: 14),
                   ),
                   onPressed: () async {
-                    await clearNotificationHistory();
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Notification history cleared"),
-                        backgroundColor: Colors.redAccent,
-                      ),
-                    );
+                    final currentUser = FirebaseAuth.instance.currentUser;
+                    if (currentUser != null) {
+                      // 🧹 1. Clear local saved data
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.remove('recent_sos_alerts');
+
+                      // 🧹 2. Clear Firebase notifications
+                      await FirebaseDatabase.instance
+                          .ref('notifications/${currentUser.uid}')
+                          .remove();
+
+                      // 🧹 3. Clear Firebase SOS alerts
+                      await FirebaseDatabase.instance
+                          .ref('sos_alerts/${currentUser.uid}')
+                          .remove();
+
+                      // 🧹 4. Update state immediately
+                      if (mounted) {
+                        setState(() {
+                          _recentSosAlerts.clear();
+                          _hasUnreadNotifications = false;
+                        });
+                      }
+
+                      // 🧹 5. Close modal and show confirmation
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("✅ Notification history cleared"),
+                            backgroundColor: Colors.green,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    }
                   },
                 ),
               ),
@@ -823,6 +852,16 @@ class _HomePageState extends State<HomePage>
       return;
     }
 
+    final currentRoute = ModalRoute.of(context)?.settings.name ?? '';
+
+    // ✅ Only show snackbars if we're truly on the HomePage
+    if (!mounted ||
+        !currentRoute.toLowerCase().contains('home') ||
+        currentRoute.contains('login') ||
+        currentRoute.contains('register')) {
+      return;
+    }
+
     for (final entry in _dangerZones.entries) {
       final zone = Map<String, dynamic>.from(entry.value);
       final zLat = (zone['lat'] as num).toDouble();
@@ -834,19 +873,16 @@ class _HomePageState extends State<HomePage>
       if (distance <= zRadius) {
         _lastDangerSnackbarTime = now;
 
-        final currentRoute = ModalRoute.of(context)?.settings.name ?? '';
-        if (!currentRoute.contains('maps_location') && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              duration: const Duration(seconds: 5),
-              backgroundColor: Colors.red.shade800,
-              content: Text(
-                '⚠️ You are inside $zName. Stay alert!',
-                style: const TextStyle(color: Colors.white),
-              ),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 5),
+            backgroundColor: Colors.red.shade800,
+            content: Text(
+              '⚠️ You are inside $zName. Stay alert!',
+              style: const TextStyle(color: Colors.white),
             ),
-          );
-        }
+          ),
+        );
         break;
       }
     }
@@ -1030,33 +1066,35 @@ class _HomePageState extends State<HomePage>
         ),
         actions: [
           Stack(
+            alignment: Alignment.center,
             children: [
               IconButton(
                 icon: const Icon(Icons.notifications, color: Colors.white),
-                onPressed: () {
-                  setState(() => _hasUnreadNotifications = false); // remove dot
-                  _showNotificationMenu(context);
+                onPressed: () async {
+                  if (!mounted) return;
+                  setState(() => _hasUnreadNotifications = false);
+
+                  await Future.delayed(const Duration(milliseconds: 150));
+
+                  // ✅ FIXED: use the same context directly
+                  if (context.mounted) _showNotificationMenu(context);
                 },
               ),
               if (_hasUnreadNotifications)
                 Positioned(
-                  right: 10,
-                  top: 10,
-                  child: AnimatedOpacity(
-                    opacity: _hasUnreadNotifications ? 1 : 0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: const BoxDecoration(
-                        color: Colors.redAccent,
-                        shape: BoxShape.circle,
-                      ),
+                  right: 12,
+                  top: 12,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      color: Colors.redAccent,
+                      shape: BoxShape.circle,
                     ),
                   ),
                 ),
             ],
-          )
+          ),
         ],
       ),
 
