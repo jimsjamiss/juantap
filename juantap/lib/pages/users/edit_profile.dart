@@ -55,7 +55,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final picker = ImagePicker();
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
-      setState(() => _selectedImage = File(picked.path));
+      final temp = File(picked.path);
+      if (temp.existsSync()) {
+        setState(() => _selectedImage = temp);
+      }
     }
   }
 
@@ -316,12 +319,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     CircleAvatar(
                       radius: 60,
                       backgroundColor: Colors.white,
-                      backgroundImage: _selectedImage != null
+                      backgroundImage:
+                      (_selectedImage != null && _selectedImage!.existsSync())
                           ? FileImage(_selectedImage!)
-                          : (_profileImageUrl != null
+                          : (_profileImageUrl != null && _profileImageUrl!.isNotEmpty
                           ? NetworkImage(_profileImageUrl!)
-                          : const AssetImage('assets/user_profile.png'))
-                      as ImageProvider,
+                          : const AssetImage('assets/user_profile.png')) as ImageProvider,
                     ),
                     Positioned(
                       bottom: 0,

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'location_of_the_user.dart';
 import 'responder.dart';
+import 'video_proof_modal.dart';
+
 
 class SendAlertResponsePage extends StatefulWidget {
   final Map<String, dynamic> alertData;
@@ -55,9 +57,9 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
   Widget build(BuildContext context) {
     final info = userInfo;
     final alert = widget.alertData;
-    final alertId = alert['alertId'] ?? '';
-    final latitude = alert['latitude'] ?? 0.0;
-    final longitude = alert['longitude'] ?? 0.0;
+    final alertId = widget.alertData['alertId'] ?? '';
+    final latitude = alert['location']?['lat'] ?? 0.0;
+    final longitude = alert['location']?['lng'] ?? 0.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFF2A9D8F),
@@ -184,6 +186,7 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
               _infoRow("Email", info['email'] ?? 'N/A'),
               _infoRow("Phone", info['phone'] ?? 'N/A'),
               _infoRow("Address", info['address'] ?? 'N/A'),
+              _infoRow("Location", alert['location']?['placeName'] ?? 'N/A'),
 
               const SizedBox(height: 16),
 
@@ -200,6 +203,69 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
 
               const SizedBox(height: 24),
 
+              // =============================
+// 🔥 PROOF SECTION (IMAGE + VIDEO MODAL)
+// =============================
+              if (alert['proofUrl'] != null && alert['proofUrl'].toString().isNotEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 16),
+                    const Text(
+                      "Proof Submitted",
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // === IMAGE PROOF ===
+                    if (alert['isVideo'] == false)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          alert['proofUrl'],
+                          height: 200,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+
+                    // === VIDEO PROOF (Modal Popup) ===
+                    if (alert['isVideo'] == true)
+                      GestureDetector(
+                        onTap: () {
+                          showDialog(
+                            context: context,
+                            barrierDismissible: true,
+                            builder: (_) =>
+                                VideoProofModal(videoUrl: alert['proofUrl']),
+                          );
+                        },
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black26,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: const [
+                              Icon(Icons.play_circle_fill,
+                                  color: Colors.white, size: 40),
+                              SizedBox(width: 12),
+                              Text(
+                                "Tap to play video proof",
+                                style: TextStyle(color: Colors.white, fontSize: 14),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+
               // ✅ Go to map button
               GestureDetector(
                 onTap: () {
@@ -211,7 +277,7 @@ class _SendAlertResponsePageState extends State<SendAlertResponsePage> {
                         latitude: latitude,
                         longitude: longitude,
                         userId: alert['userId'] ?? '',
-                        userName: alert['name'] ?? 'Unknown User',
+                        userName: alert['username'] ?? 'Unknown User',
                       ),
                     ),
                   );

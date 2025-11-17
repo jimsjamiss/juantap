@@ -22,6 +22,8 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:juantap/pages/users/sos_service.dart';
+import 'package:juantap/pages/users/sos_proof_dialog.dart';
+
 
 
 class HomePage extends StatefulWidget {
@@ -50,7 +52,8 @@ class _HomePageState extends State<HomePage>
   // ---- User/Profile ----
   String _username = '';
   String? profileImageUrl;
-  final _user = FirebaseAuth.instance.currentUser;
+  final User? _user = FirebaseAuth.instance.currentUser;
+
 
   // ---- Danger Zone handling ----
   final DatabaseReference _dangerRef =
@@ -209,6 +212,7 @@ class _HomePageState extends State<HomePage>
 
     if (_isVoiceCommandEnabled) {
       await _startVoiceListening();
+
     }
   }
   Future<bool> _checkAndRequestMicPermission() async {
@@ -224,7 +228,13 @@ class _HomePageState extends State<HomePage>
     bool available = false;
     try {
       available = await _speech.initialize(
-        onError: (err) => print("🎙️ Voice error: $err"),
+        onError: (err) => print("💥 ERROR: $err"),
+        onStatus: (status) {
+          print("🔊 STATUS: $status");
+          if (status == "notListening") {
+            Future.delayed(const Duration(milliseconds: 200), _startVoiceListening);
+          }
+        },
       );
     } catch (e) {
       print("⚠️ Speech init exception: $e");
@@ -250,27 +260,69 @@ class _HomePageState extends State<HomePage>
     _isListening = true;
     _speech.listen(
       listenMode: stt.ListenMode.dictation,
-      pauseFor: const Duration(seconds: 2), // faster restart
-      listenFor: const Duration(minutes: 10),
       partialResults: true,
+      pauseFor: const Duration(seconds: 3),
+      listenFor: const Duration(minutes: 30),
       onResult: (result) {
         final spoken = result.recognizedWords.toLowerCase();
         print("🎤 Heard: $spoken");
+
         if (spoken.contains(_keyword.toLowerCase())) {
-          _triggerVoiceSOS();
+          _triggerVoiceSOSWithProof();
         }
       },
+      localeId: "en_US",
     );
   }
-  Future<void> _triggerVoiceSOS() async {
-    await SOSService.sendSosAlert();
+  Future<void> _triggerVoiceSOSWithProof() async {
+    // Show detection feedback
     if (!_silentMode && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('🚨 SOS triggered by voice ($_keyword)'),
-        backgroundColor: Colors.redAccent,
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("🎤 Keyword detected: $_keyword"),
+          backgroundColor: Colors.blueAccent,
+        ),
+      );
+    }
+
+    // Navigate to the new page where user selects crime + uploads photo or video
+    final result = await Navigator.pushNamed(context, '/sos_proof');
+
+    // User completed the upload
+    if (result is Map) {
+      final proofUrl = result['proofUrl'];
+      final isVideo = result['isVideo'];
+      final crimeType = result['crimeType'];
+
+      // Send full SOS with proof
+      await SOSService.sendSosAlertWithProof(
+        proofUrl: proofUrl,
+        isVideo: isVideo,
+        crimeType: crimeType,
+      );
+
+      if (!_silentMode && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("🚨 SOS sent with proof"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+    else {
+      // If user backed out or cancelled
+      if (mounted && !_silentMode) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("SOS cancelled — no proof submitted"),
+            backgroundColor: Colors.grey,
+          ),
+        );
+      }
     }
   }
+
   //voice command ends here//
   // ===================== Listen to SOS Alerts (no duplicates / no popup here) ======================
   void _listenToUserSosAlerts() {
@@ -367,8 +419,12 @@ class _HomePageState extends State<HomePage>
           });
         }
       });
-      newNotifs.sort(
-              (a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+      newNotifs.sort((a, b) {
+        final aTime = int.tryParse(a['timestamp'].toString()) ?? 0;
+        final bTime = int.tryParse(b['timestamp'].toString()) ?? 0;
+        return bTime.compareTo(aTime);
+      });
 
       setState(() {
         _notifications = newNotifs;
@@ -454,8 +510,11 @@ class _HomePageState extends State<HomePage>
     }
 
     // Sort newest first
-    mergedSosAlerts.sort((a, b) =>
-        ((b['timestamp'] ?? 0) as int).compareTo((a['timestamp'] ?? 0) as int));
+    mergedSosAlerts.sort((a, b) {
+      final aTime = int.tryParse(a['timestamp'].toString()) ?? 0;
+      final bTime = int.tryParse(b['timestamp'].toString()) ?? 0;
+      return bTime.compareTo(aTime);
+    });
 
     // ✅ Save merged list locally
     setState(() => _recentSosAlerts = mergedSosAlerts);
@@ -482,8 +541,12 @@ class _HomePageState extends State<HomePage>
         });
       });
 
-      acceptedNotifications.sort((a, b) =>
-          ((b['timestamp'] ?? 0) as int).compareTo((a['timestamp'] ?? 0) as int));
+      acceptedNotifications.sort((a, b) {
+        final aTime = int.tryParse(a['timestamp'].toString()) ?? 0;
+        final bTime = int.tryParse(b['timestamp'].toString()) ?? 0;
+        return bTime.compareTo(aTime);
+      });
+
     }
 
     // 🔔 Show notification modal
@@ -1114,8 +1177,7 @@ class _HomePageState extends State<HomePage>
                       title: const Text('Edit Name'),
                       content: TextField(
                         controller: controller,
-                        decoration: const InputDecoration(
-                            hintText: 'Enter your name'),
+                        decoration: const InputDecoration(hintText: 'Enter your name'),
                       ),
                       actions: [
                         TextButton(
@@ -1141,9 +1203,18 @@ class _HomePageState extends State<HomePage>
                     ),
                   );
                 },
-                child: Text(_username, style: const TextStyle(fontSize: 18)),
+                child: Text(
+                  _username,
+                  style: const TextStyle(fontSize: 18),
+                ),
               ),
-              accountEmail: const Text('user@juantap.com'),
+
+              // ✅ SHOW LOGGED-IN USER'S ACTUAL EMAIL
+              accountEmail: Text(
+                _user?.email ?? "No email available",
+                style: const TextStyle(fontSize: 14),
+              ),
+
               currentAccountPicture: GestureDetector(
                 onTap: () => Navigator.pushNamed(context, '/edit_profile'),
                 child: CircleAvatar(
@@ -1155,13 +1226,16 @@ class _HomePageState extends State<HomePage>
                 ),
               ),
             ),
+
             ListTile(
               leading: const Icon(Icons.account_circle, color: Colors.white),
               title: const Text('Profile Settings',
                   style: TextStyle(color: Colors.white)),
               onTap: () => Navigator.pushNamed(context, '/edit_profile'),
             ),
+
             const Divider(color: Colors.white54),
+
             ListTile(
               leading: const Icon(Icons.shield, color: Colors.white),
               title: const Text('Self-Defense Guides',
@@ -1170,11 +1244,11 @@ class _HomePageState extends State<HomePage>
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                      builder: (_) => const SelfDefenseGuidePage()),
+                  MaterialPageRoute(builder: (_) => const SelfDefenseGuidePage()),
                 );
               },
             ),
+
             ListTile(
               leading: const Icon(Icons.mic, color: Colors.white),
               title: const Text('Voice Command Settings',
@@ -1183,11 +1257,11 @@ class _HomePageState extends State<HomePage>
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                      builder: (_) => const VoiceCommandSettings()),
+                  MaterialPageRoute(builder: (_) => const VoiceCommandSettings()),
                 );
               },
             ),
+
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.white),
               title: const Text('Logout', style: TextStyle(color: Colors.white)),
@@ -1196,16 +1270,13 @@ class _HomePageState extends State<HomePage>
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text('Confirm Logout'),
-                    content:
-                    const Text('Are you sure you want to log out?'),
+                    content: const Text('Are you sure you want to log out?'),
                     actions: [
                       TextButton(
-                          onPressed: () =>
-                              Navigator.pop(context, false),
+                          onPressed: () => Navigator.pop(context, false),
                           child: const Text('Cancel')),
                       TextButton(
-                        onPressed: () =>
-                            Navigator.pop(context, true),
+                        onPressed: () => Navigator.pop(context, true),
                         child: const Text('Logout'),
                       ),
                     ],
@@ -1260,7 +1331,24 @@ class _HomePageState extends State<HomePage>
                   },
                 ),
                 GestureDetector(
-                  onTap: _confirmAndSendSOS,
+                  onTap: () async {
+                    final result = await showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const SosProofDialog(),
+                    );
+
+                    if (result is Map) {
+                      await SOSService.sendSosAlertWithProof(
+                        proofUrl: result['proofUrl'],
+                        isVideo: result['isVideo'],
+                        crimeType: result['crimeType'],
+                      );
+
+                      _confirmAndSendSOS();
+                    }
+                  },
+
                   child: Container(
                     width: 150,
                     height: 150,

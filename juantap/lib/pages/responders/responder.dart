@@ -179,7 +179,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
       final timestamp = DateTime.tryParse(timestampStr);
       if (timestamp == null ||
-          DateTime.now().difference(timestamp).inHours >= 24) return;
+          DateTime.now().difference(timestamp).inHours >= 10) return;
 
       final alert = {
         'alertId': alertId,
@@ -193,10 +193,19 @@ class _MyHomePageState extends State<MyHomePage> {
         'profileImage': profileImage,
         'reason': reason,
         'timestamp': timestampStr,
-        'location': '$lat, $lng',
+        'location': {
+          'lat': lat,
+          'lng': lng,
+        },
         'latitude': lat,
         'longitude': lng,
+
+        // 🔥 NEW FIELDS
+        'proofUrl': data['proofUrl'] ?? '',
+        'isVideo': data['isVideo'] ?? false,
+        'crimeType': data['crimeType'] ?? 'General Alert',
       };
+
 
       // Prevent duplicates
       final exists = recentAlerts.any(
@@ -374,7 +383,7 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       recentAlerts.removeWhere((a) {
         final ts = DateTime.tryParse(a['timestamp'] ?? '');
-        return ts == null || now.difference(ts).inHours >= 24;
+        return ts == null || now.difference(ts).inHours >= 10;
       });
     });
   }
@@ -482,9 +491,8 @@ class _MyHomePageState extends State<MyHomePage> {
         itemCount: recentAlerts.length,
         itemBuilder: (context, i) {
           final item = recentAlerts[i];
-          final latLng = item['location']!.split(',');
-          final lat = double.tryParse(latLng[0].trim()) ?? 0;
-          final lng = double.tryParse(latLng[1].trim()) ?? 0;
+          final lat = item['location']['lat'] ?? 0.0;
+          final lng = item['location']['lng'] ?? 0.0;
 
           return InkWell(
             borderRadius: BorderRadius.circular(16),
@@ -492,7 +500,10 @@ class _MyHomePageState extends State<MyHomePage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                    builder: (_) => SendAlertResponsePage(alertData: item)),
+                  builder: (_) => SendAlertResponsePage(
+                    alertData: item,
+                  ),
+                ),
               );
             },
             child: Container(

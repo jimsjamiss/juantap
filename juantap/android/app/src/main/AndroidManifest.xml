@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.juantap">  <!-- ✅ Make sure this matches your actual Kotlin package -->
+    package="com.example.juantap">
 
-    <!-- ✅ Permissions -->
+    <!-- Permissions -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
@@ -12,7 +12,18 @@
         android:label="JuanTap"
         android:icon="@mipmap/launcher_icon">
 
-        <!-- ✅ Main activity (entry point of the app) -->
+        <!-- ❌ WRONG PLACE BEFORE — NOW FIXED -->
+        <!-- Speech-to-text auto config (MUST be in <application>, not inside <activity>) -->
+        <meta-data
+            android:name="speech_to_text.auto_config"
+            android:value="true" />
+
+        <!-- Flutter theme -->
+        <meta-data
+            android:name="io.flutter.embedding.android.NormalTheme"
+            android:resource="@style/NormalTheme" />
+
+        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -22,35 +33,32 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
-            <!-- Theme visible while Flutter loads -->
-            <meta-data
-                android:name="io.flutter.embedding.android.NormalTheme"
-                android:resource="@style/NormalTheme" />
-
             <!-- Flutter app entry point -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
 
-        <!-- ✅ Required for Google Maps API -->
+        <!-- Google Maps API Key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyCnHDdDupstvWoU408P-OcsO0-UMg7mDxs" />
 
-        <!-- ✅ Flutter engine integration -->
+        <!-- Flutter engine -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
     </application>
 
-    <!-- ✅ For Android 11+ text processing (Flutter internal plugin use) -->
+    <!-- Required for Android 11+ -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
     </queries>
+
 </manifest>
