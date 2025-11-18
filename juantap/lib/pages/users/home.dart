@@ -17,10 +17,12 @@ import 'package:juantap/pages/users/sos_service.dart';
 import 'package:juantap/pages/users/sos_alert_listener.dart';
 import 'package:juantap/pages/users/voice_command_settings.dart';
 import 'package:location/location.dart' as loc;
+import 'package:vibration/vibration.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:juantap/pages/users/sos_service.dart';
 import 'package:juantap/pages/users/sos_proof_dialog.dart';
-
 
 
 
@@ -1342,11 +1344,7 @@ class _HomePageState extends State<HomePage>
                         isVideo: result['isVideo'],
                         crimeType: result['crimeType'],
                       );
-                      await SOSService.saveSosToOnlyDatabase(
-                        proofUrl: result['proofUrl'],
-                        isVideo: result['isVideo'],
-                        crimeType: result['crimeType'],
-                      );
+
                       _confirmAndSendSOS();
                     }
                   },
