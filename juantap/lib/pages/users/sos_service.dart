@@ -7,6 +7,7 @@ import 'dart:convert';
 
 class SOSService {
 
+  String responderId = "defaultResponder"; // Temporary responder
   static DateTime? _lastSosTime; // <--- ADD THIS
 
   // ===========================================================
@@ -49,6 +50,19 @@ class SOSService {
     }
   }
 
+  //AUTO CREATE CHAT ON SOS//
+  Future<String> createChatAfterSOS(String userId, String responderId) async {
+    final ref = FirebaseDatabase.instance.ref("chat_rooms").push();
+
+    await ref.set({
+      "userId": userId,
+      "responderId": responderId,
+      "lastMessage": "SOS Triggered",
+      "lastTimestamp": ServerValue.timestamp,
+    });
+
+    return ref.key!;
+  }
   // ===========================================================
   //  Convert lat/lng → human readable place name (Reverse Geocode)
   // ===========================================================
@@ -153,6 +167,7 @@ class SOSService {
           'lat': position.latitude,
           'lng': position.longitude,
           'placeName': placeName,
+          'acceptedBy': null,
         },
 
         'crimeType': null,
@@ -192,6 +207,11 @@ class SOSService {
       print("🗂️ Saved SOS to user history.");
 
       print("✅ SOS alert sent successfully (NO PROOF).");
+
+      // 🔹 AUTO-CREATE CHAT ROOM AFTER SOS
+      String responderId = "defaultResponder"; // TODO: replace with real responder UID
+      final chatId = await SOSService().createChatAfterSOS(uid, responderId);
+      print("💬 Chat room created automatically: $chatId");
 
     } catch (e) {
       print("❌ Error sending SOS: $e");
@@ -315,6 +335,11 @@ class SOSService {
       print("🗂️ Saved SOS WITH PROOF to user history.");
 
       print("✅ SOS alert WITH PROOF sent successfully.");
+
+      // 🔹 AUTO-CREATE CHAT ROOM AFTER SOS WITH PROOF
+      String responderId = "defaultResponder";
+      final chatId = await SOSService().createChatAfterSOS(uid, responderId);
+      print("💬 Chat room created automatically (with proof): $chatId");
 
     } catch (e) {
       print("❌ Error sending SOS with proof: $e");

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'contact_lists_requests.dart';
+import 'chat_screen.dart';
+import 'chatList_screen.dart';
 
 
 class ContactListPage extends StatefulWidget {
@@ -17,6 +19,8 @@ class _ContactListPageState extends State<ContactListPage> {
   List<Map<String, dynamic>> _searchResults = [];
   Map<String, dynamic> _requests = {};
   bool _isRequestTab = false;
+  bool _isMessagesTab = false;
+  late String myId;
 
   StreamSubscription<DatabaseEvent>? _contactListener;
 
@@ -24,7 +28,7 @@ class _ContactListPageState extends State<ContactListPage> {
   void initState() {
     super.initState();
     _startContactListener();
-
+    myId = FirebaseAuth.instance.currentUser!.uid;
   }
 
   void _startContactListener() {
@@ -176,35 +180,86 @@ class _ContactListPageState extends State<ContactListPage> {
                     children: [
                       GestureDetector(
                         onTap: () => Navigator.pop(context),
-                        child: Icon(Icons.arrow_back, color: Colors.black),
+                        child: const Icon(Icons.arrow_back, color: Colors.black),
                       ),
-                      SizedBox(width: 12),
+
+                      const SizedBox(width: 12),
+
+                      // CONTACTS TAB
                       GestureDetector(
                         onTap: () {
-                          setState(() => _isRequestTab = false);
+                          setState(() {
+                            _isRequestTab = false;
+                            _isMessagesTab = false;
+                          });
                         },
                         child: Container(
-                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                           decoration: BoxDecoration(
-                            color: !_isRequestTab ? Colors.white : Colors.transparent,
+                            color: (!_isRequestTab && !_isMessagesTab)
+                                ? Colors.white
+                                : Colors.transparent,
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Text('Contacts', style: TextStyle(color: !_isRequestTab ? Colors.black : Colors.white)),
+                          child: Text(
+                            'Contacts',
+                            style: TextStyle(
+                              color: (!_isRequestTab && !_isMessagesTab)
+                                  ? Colors.black
+                                  : Colors.white,
+                            ),
+                          ),
                         ),
                       ),
-                      SizedBox(width: 8),
+
+                      const SizedBox(width: 8),
+
+                      // MESSAGES TAB (NEW)
                       GestureDetector(
                         onTap: () {
-                          setState(() => _isRequestTab = true);
+                          setState(() {
+                            _isRequestTab = false;
+                            _isMessagesTab = true;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: (_isMessagesTab) ? Colors.white : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'Messages',
+                            style: TextStyle(
+                              color: _isMessagesTab ? Colors.black : Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 8),
+
+                      // REQUEST TAB
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _isRequestTab = true;
+                            _isMessagesTab = false;
+                          });
                           _loadRequests();
                         },
                         child: Container(
-                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                           decoration: BoxDecoration(
                             color: _isRequestTab ? Colors.white : Colors.transparent,
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Text('Request', style: TextStyle(color: _isRequestTab ? Colors.black : Colors.white)),
+                          child: Text(
+                            'Request',
+                            style: TextStyle(
+                              color: _isRequestTab ? Colors.black : Colors.white,
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -230,7 +285,12 @@ class _ContactListPageState extends State<ContactListPage> {
             Expanded(
               child: _isRequestTab
                   ? _requests.isEmpty
-                  ? Center(child: Text('No pending requests', style: TextStyle(color: Colors.white54)))
+                  ? Center(
+                child: Text(
+                  'No pending requests',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
                   : ListView(
                 children: _requests.entries.map((entry) {
                   final senderUid = entry.key;
@@ -238,18 +298,24 @@ class _ContactListPageState extends State<ContactListPage> {
                   final senderUsername = request['senderUsername'];
 
                   return ListTile(
-                    title: Text(senderUsername, style: TextStyle(color: Colors.white)),
-                    subtitle: Text('wants to add you as a contact'),
-                    tileColor: Color(0xFF388E8E),
+                    title: Text(senderUsername,
+                        style: TextStyle(color: Colors.white)),
+                    subtitle: const Text(
+                      'wants to add you as a contact',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                    tileColor: const Color(0xFF388E8E),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
-                          icon: Icon(Icons.check, color: Colors.greenAccent),
-                          onPressed: () => _acceptRequest(senderUid, senderUsername),
+                          icon:
+                          const Icon(Icons.check, color: Colors.greenAccent),
+                          onPressed: () =>
+                              _acceptRequest(senderUid, senderUsername),
                         ),
                         IconButton(
-                          icon: Icon(Icons.close, color: Colors.redAccent),
+                          icon: const Icon(Icons.close, color: Colors.redAccent),
                           onPressed: () => _declineRequest(senderUid),
                         ),
                       ],
@@ -257,33 +323,51 @@ class _ContactListPageState extends State<ContactListPage> {
                   );
                 }).toList(),
               )
+
+              // 🔵 NEW: MESSAGES TAB LOGIC
+                  : _isMessagesTab
+                  ? ChatListScreen(myId: myId) // <-- Your chat list UI
+
+              // CONTACTS TAB (DEFAULT)
                   : filteredResults.isEmpty
-                  ? Center(child: Text('No contacts found.', style: TextStyle(color: Colors.white54)))
+                  ? Center(
+                child: Text(
+                  'No contacts found.',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
                   : ListView.builder(
                 itemCount: filteredResults.length,
                 itemBuilder: (context, index) {
                   final contact = filteredResults[index];
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundImage: contact['profileImage'] != null && contact['profileImage'].toString().isNotEmpty
+                      backgroundImage:
+                      contact['profileImage'] != null &&
+                          contact['profileImage'].toString().isNotEmpty
                           ? NetworkImage(contact['profileImage'])
-                          : AssetImage('assets/images/user_profile.png') as ImageProvider,
+                          : const AssetImage(
+                          'assets/images/user_profile.png')
+                      as ImageProvider,
                     ),
-                    title: Text(contact['nickname'], style: TextStyle(color: Colors.white)),
+                    title: Text(contact['nickname'],
+                        style: const TextStyle(color: Colors.white)),
                     subtitle: Text(
                       'Full Name: ${contact['name'] ?? 'None'}\n${contact['phone']}',
-                      style: TextStyle(color: Colors.white70),
+                      style: const TextStyle(color: Colors.white70),
                     ),
-                    tileColor: Color(0xFF388E8E),
+                    tileColor: const Color(0xFF388E8E),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
-                          icon: Icon(Icons.edit, color: Colors.yellow),
-                          onPressed: () => _editNickname(contact['key'], contact['nickname']),
+                          icon: const Icon(Icons.edit, color: Colors.yellow),
+                          onPressed: () => _editNickname(
+                              contact['key'], contact['nickname']),
                         ),
                         IconButton(
-                          icon: Icon(Icons.delete, color: Colors.redAccent),
+                          icon: const Icon(Icons.delete,
+                              color: Colors.redAccent),
                           onPressed: () => _deleteContact(contact['key']),
                         ),
                       ],
@@ -291,7 +375,7 @@ class _ContactListPageState extends State<ContactListPage> {
                   );
                 },
               ),
-            ),
+            )
           ],
         ),
       ),
