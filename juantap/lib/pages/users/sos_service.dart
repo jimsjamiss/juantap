@@ -345,4 +345,89 @@ class SOSService {
       print("❌ Error sending SOS with proof: $e");
     }
   }
+  // ===================================================================
+// SAVE SOS ONLY TO "only_sos_alerts" (No Contacts, No Responders)
+// ===================================================================
+  static Future<void> saveSosToOnlyDatabase({
+    String? proofUrl,
+    bool? isVideo,
+    String? crimeType,
+  }) async {
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        print("❌ No user signed in.");
+        return;
+      }
+
+      final uid = user.uid;
+      final db = FirebaseDatabase.instance.ref();
+
+      final userSnapshot = await db.child("users/$uid").get();
+      if (!userSnapshot.exists) {
+        print("❌ User data not found.");
+        return;
+      }
+
+      final userData = Map<String, dynamic>.from(userSnapshot.value as Map);
+
+      final username = userData['username'] ?? 'Unknown';
+      final email = userData['email'] ?? '';
+      final phone = userData['phone'] ?? '';
+      final address = userData['address'] ?? '';
+      final birthdate = userData['birthdate'] ?? '';
+      final nationality = userData['nationality'] ?? '';
+      final profileImage = userData['profileImage'] ?? '';
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final placeName = await getPlaceNameFromORS(
+        position.latitude,
+        position.longitude,
+      );
+
+      final timestamp = DateTime.now().toIso8601String();
+
+      final sosData = {
+        'userId': uid,
+        'username': username,
+        'email': email,
+        'phone': phone,
+        'address': address,
+        'birthdate': birthdate,
+        'nationality': nationality,
+        'profileImage': profileImage,
+
+        'reason': 'SOS Alert',
+        'crimeType': crimeType ?? null,
+        'proofUrl': proofUrl ?? null,
+        'isVideo': isVideo ?? null,
+
+
+        'timestamp': timestamp,
+
+        'location': {
+          'lat': position.latitude,
+          'lng': position.longitude,
+          'placeName': placeName,
+        }
+      };
+
+      await db.child("only_sos_alerts/$uid").push().set(sosData);
+
+      print("📌 Saved SOS ONLY under only_sos_alerts/$uid");
+    } catch (e) {
+      print("❌ Error saving SOS to only_sos_alerts: $e");
+    }
+  }
+
 }

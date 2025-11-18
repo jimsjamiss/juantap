@@ -337,7 +337,7 @@ class _LoginPageState extends State<LoginPage> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _isButtonEnabled ? _login : null,
+                        onPressed: _login,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFF7F6D9),
                           disabledBackgroundColor: const Color(0xFFC7C6A1),

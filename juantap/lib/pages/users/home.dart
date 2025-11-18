@@ -1342,7 +1342,11 @@ class _HomePageState extends State<HomePage>
                         isVideo: result['isVideo'],
                         crimeType: result['crimeType'],
                       );
-
+                      await SOSService.saveSosToOnlyDatabase(
+                        proofUrl: result['proofUrl'],
+                        isVideo: result['isVideo'],
+                        crimeType: result['crimeType'],
+                      );
                       _confirmAndSendSOS();
                     }
                   },

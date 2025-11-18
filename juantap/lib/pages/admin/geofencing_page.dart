@@ -3,6 +3,16 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:async';
+import 'package:latlong2/latlong.dart' show Distance;
+import 'dart:math' as math;
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+
+
+
+
 
 class GeofencingPage extends StatefulWidget {
   const GeofencingPage({super.key});
@@ -15,10 +25,11 @@ class _GeofencingPageState extends State<GeofencingPage>
     with SingleTickerProviderStateMixin {
   late final DatabaseReference _zonesRef;
   final MapController _mapCtrl = MapController();
-
+  final Distance _distance = Distance();
+  final List<Map<String, dynamic>> _sosZones = [];
   final List<Map<String, dynamic>> _zones = [];
   final _labelCtrl = TextEditingController();
-  double _radius = 150;
+  double _radius = 40;
 
   String? _focusedZoneId;
   LatLng? _focusedPosition;
@@ -30,6 +41,7 @@ class _GeofencingPageState extends State<GeofencingPage>
     super.initState();
     _zonesRef = FirebaseDatabase.instance.ref('danger_zones');
     _loadZones();
+    _loadSOSZones();    // automatic SOS zones
   }
 
   @override
@@ -65,6 +77,249 @@ class _GeofencingPageState extends State<GeofencingPage>
     });
   }
 
+  void _loadSOSZones() {
+    final sosRef = FirebaseDatabase.instance.ref('only_sos_alerts');
+
+    sosRef.onValue.listen((event) {
+      if (!event.snapshot.exists) return;
+
+      final Map<dynamic, dynamic> users =
+      Map<dynamic, dynamic>.from(event.snapshot.value as Map);
+
+      final List<Map<String, dynamic>> loadedSOS = [];
+
+      users.forEach((userId, alerts) {
+        final Map<dynamic, dynamic> alertMap =
+        Map<dynamic, dynamic>.from(alerts);
+
+        alertMap.forEach((alertId, data) {
+          final a = Map<String, dynamic>.from(data);
+
+          if (a['location'] == null) return;
+
+          final loc = Map<String, dynamic>.from(a['location']);
+
+          loadedSOS.add({
+            'id': alertId,
+            'userId': userId,
+            'username': a['username'] ?? 'Unknown',
+            'reason': a['reason'] ?? 'SOS Alert',
+
+            'crimeType': a['crimeType'] ?? 'Not specified',
+            'proofUrl': a['proofUrl'] ?? '',
+            'isVideo': a['isVideo'] ?? false,
+
+
+            // 🟢 NEW: FULL USER DETAILS
+            'address': a['address'] ?? '',
+            'birthdate': a['birthdate'] ?? '',
+            'email': a['email'] ?? '',
+            'nationality': a['nationality'] ?? '',
+            'phone': a['phone'] ?? '',
+            'profileImage': a['profileImage'] ?? '',
+
+            // Location details
+            'lat': (loc['lat'] as num).toDouble(),
+            'lng': (loc['lng'] as num).toDouble(),
+            'placeName': loc['placeName'] ?? 'Unknown area',
+
+            'timestamp': a['timestamp'] ?? '',
+          });
+        });
+      });
+
+      setState(() {
+        _sosZones
+          ..clear()
+          ..addAll(loadedSOS);
+      });
+
+      // 👇 auto-detect clusters once SOS zones update
+      _detectDangerClusters();
+    });
+  }
+
+  Future<ChewieController> _initializeVideoPlayer(String url) async {
+    final videoPlayerController = VideoPlayerController.networkUrl(Uri.parse(url));
+    await videoPlayerController.initialize();
+
+    return ChewieController(
+      videoPlayerController: videoPlayerController,
+      autoPlay: false,
+      looping: false,
+      allowFullScreen: true,
+      allowPlaybackSpeedChanging: true,
+      autoInitialize: true,
+    );
+  }
+
+  void _goToSOSGroupCenter(List<Map<String, dynamic>> alerts) {
+    if (alerts.isEmpty) return;
+
+    // compute center
+    final double avgLat = alerts.map((a) => a['lat'] as double).reduce((a, b) => a + b) / alerts.length;
+    final double avgLng = alerts.map((a) => a['lng'] as double).reduce((a, b) => a + b) / alerts.length;
+
+    final LatLng target = LatLng(avgLat, avgLng);
+
+    // zoom into the zone
+    _mapCtrl.move(target, 17);
+  }
+
+
+  void _detectDangerClusters() async {
+    if (_sosZones.length < 3) return;
+
+    const double clusterRadius = 120; // meters
+
+    List<Map<String, dynamic>> processed = [];
+
+    for (var p in _sosZones) {
+      if (processed.contains(p)) continue;
+
+      List<Map<String, dynamic>> cluster = [];
+
+      for (var q in _sosZones) {
+        final double d = _distance(
+          LatLng(p['lat'], p['lng']),
+          LatLng(q['lat'], q['lng']),
+        );
+
+        if (d <= clusterRadius) {
+          cluster.add(q);
+        }
+      }
+
+      // Cluster found
+      if (cluster.length >= 3) {
+        // Compute average center
+        double avgLat = cluster
+            .map((c) => c['lat'] as double)
+            .reduce((a, b) => a + b) /
+            cluster.length;
+
+        double avgLng = cluster
+            .map((c) => c['lng'] as double)
+            .reduce((a, b) => a + b) /
+            cluster.length;
+
+        // Compute radius
+        double maxDist = 0;
+        for (var c in cluster) {
+          double d2 = _distance(
+            LatLng(avgLat, avgLng),
+            LatLng(c['lat'], c['lng']),
+          );
+          if (d2 > maxDist) maxDist = d2;
+        }
+
+        final double finalRadius = (maxDist + 5).clamp(10, 40);
+
+        // Check if similar zone already exists
+        final exists = _zones.any((z) =>
+        (z['lat'] - avgLat).abs() < 0.0004 &&
+            (z['lng'] - avgLng).abs() < 0.0004);
+
+        if (!exists) {
+          final id = _zonesRef.push().key!;
+
+          // Generate a MUCH smaller polygon
+          final polygon = _generateSmallPolygon(avgLat, avgLng, 10);  // 10 meters small
+
+          // Save polygon to Firebase (instead of circle radius)
+          await _zonesRef.child(id).set({
+            "name": cluster.first['placeName'] ?? "Auto Danger Zone",
+            "lat": avgLat,
+            "lng": avgLng,
+            "polygon": polygon
+                .map((p) => {"lat": p.latitude, "lng": p.longitude})
+                .toList(),
+            "autoGenerated": true,
+            "created_at": DateTime.now().toIso8601String(),
+
+            // 👇 ADD THIS — store all SOS details inside the zone
+            "sos_details": cluster.map((s) {
+              return {
+                "id": s["id"],
+                "userId": s["userId"],
+                "username": s["username"],
+                "reason": s["reason"],
+                "lat": s["lat"],
+                "lng": s["lng"],
+                "placeName": s["placeName"],
+                "timestamp": s["timestamp"],
+              };
+            }).toList(),
+          });
+          print("🔥 Auto-danger polygon created at $avgLat, $avgLng");
+        }
+
+
+        processed.addAll(cluster);
+      }
+    }
+  }
+
+  // ======================================================
+// SMALL CUSTOM POLYGON GENERATOR (adjustable meters)
+// ======================================================
+  List<LatLng> _generateSmallPolygon(double lat, double lng, double meterRadius) {
+    const double scale = 0.000009; // degrees per meter
+
+    return List.generate(12, (i) {
+      final angle = i * 30 * math.pi / 180;
+      final dx = meterRadius * scale * math.cos(angle);
+      final dy = meterRadius * scale * math.sin(angle);
+      return LatLng(lat + dy, lng + dx);
+    });
+  }
+
+
+// ===============================
+// ORS Isochrone Polygon Generator
+// ===============================
+  Future<List<LatLng>> _getORSIsochronePolygon(double lat, double lng) async {
+    const orsApiKey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjZkNTQ2YzZmZmE0ZDQ0Yzc5OWFiMTQ3Yzg2ZTllZTI5IiwiaCI6Im11cm11cjY0In0=";
+
+    final url = Uri.parse(
+        "https://api.openrouteservice.org/v2/isochrones/foot-walking");
+
+    final body = {
+      "locations": [
+        [lng, lat]
+      ],
+      "range": [10],      // radius in meters
+      "range_type": "distance",
+      "units": "m"
+    };
+
+    final response = await http.post(
+      url,
+      headers: {
+        "Authorization": orsApiKey,
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode != 200) {
+      print("ORS Isochrone Error: ${response.body}");
+      return [];
+    }
+
+    final data = jsonDecode(response.body);
+
+    final coords = data["features"][0]["geometry"]["coordinates"][0];
+
+    List<LatLng> polygon = coords
+        .map<LatLng>((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
+        .toList();
+
+    print("🔶 ORS polygon generated with ${polygon.length} points");
+    return polygon;
+  }
+
+
   // 💾 Save new zone (fixed)
   Future<void> _saveZone(LatLng center, String label, double radius) async {
     final id = _zonesRef.push().key!;
@@ -74,9 +329,8 @@ class _GeofencingPageState extends State<GeofencingPage>
       'lat': center.latitude,
       'lng': center.longitude,
       'radius': radius,
+      'autoGenerated': false,
       'created_at': DateTime.now().toIso8601String(),
-      'report_count': 0, // ✅ new counter field
-      'reports': {}, // ✅ proper structure
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -365,19 +619,37 @@ class _GeofencingPageState extends State<GeofencingPage>
   Widget build(BuildContext context) {
     const defaultCenter = LatLng(10.3236, 123.9221);
 
-    final List<Marker> markers = _zones.map((z) {
-      final bool isFocused = z['id'] == _focusedZoneId;
-      return Marker(
-        width: isFocused ? 50 : 40,
-        height: isFocused ? 50 : 40,
-        point: LatLng(z['lat'], z['lng']),
-        child: Icon(
-          Icons.warning_amber_rounded,
-          color: isFocused ? Colors.orangeAccent : Colors.deepOrange,
-          size: isFocused ? 48 : 36,
-        ),
-      );
-    }).toList();
+    final List<Marker> markers = [
+      // Existing manual danger zones
+      ..._zones.map((z) {
+        final bool isFocused = z['id'] == _focusedZoneId;
+        return Marker(
+          width: isFocused ? 50 : 40,
+          height: isFocused ? 50 : 40,
+          point: LatLng(z['lat'], z['lng']),
+          child: Icon(
+            Icons.warning_amber_rounded,
+            color: isFocused ? Colors.orangeAccent : Colors.deepOrange,
+            size: isFocused ? 48 : 36,
+          ),
+        );
+      }),
+
+      // 🔥 NEW: SOS Alert danger points
+      ..._sosZones.map((s) {
+        return Marker(
+          width: 40,
+          height: 40,
+          point: LatLng(s['lat'], s['lng']),
+          child: const Icon(
+            Icons.location_history,
+            color: Colors.red,
+            size: 38,
+          ),
+        );
+      }),
+    ];
+
 
     final List<CircleMarker> circles = [
       ..._zones.map((z) => CircleMarker(
@@ -434,13 +706,78 @@ class _GeofencingPageState extends State<GeofencingPage>
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.juantap.admin',
                     ),
-                    CircleLayer(circles: circles),
+                    PolygonLayer(
+                      polygons: [
+                        // ======================================
+                        // 🆕 ORS polygons (auto-generated danger zones)
+                        // ======================================
+                        ..._zones.map((z) {
+                          if (z["polygon"] == null) return null;               // ⛔ skip null
+                          if (z["polygon"] is! List) return null;              // ⛔ skip wrong type
+                          if ((z["polygon"] as List).isEmpty) return null;     // ⛔ skip empty list
+
+                          final List<dynamic> coords = z["polygon"];
+                          final List<LatLng> polygonPoints = coords
+                              .map((c) => LatLng(c["lat"], c["lng"]))
+                              .toList();
+
+                          return Polygon(
+                            points: polygonPoints,
+                            color: Colors.orange.withOpacity(0.25),
+                            borderColor: Colors.deepOrange,
+                            borderStrokeWidth: 2,
+                          );
+                        }).where((p) => p != null).cast<Polygon>(),
+
+                        // ======================================
+                        // Manual zones converted to circle-polygons
+                        // ======================================
+                        ..._zones.map((z) {
+                          final center = LatLng(z['lat'], z['lng']);
+                          final radius = z['radius'].toDouble();
+
+                          final points = List.generate(12, (i) {
+                            final angle = (i * 30) * 3.1415 / 180;
+                            final dx = radius * 0.000005 * math.cos(angle);
+                            final dy = radius * 0.000005 * math.sin(angle);
+                            return LatLng(center.latitude + dy, center.longitude + dx);
+                          });
+
+                          return Polygon(
+                            points: points,
+                            color: Colors.orange.withOpacity(0.25),
+                            borderColor: Colors.deepOrange,
+                            borderStrokeWidth: 2,
+                          );
+                        }),
+
+                        // ======================================
+                        // Focused zone pulse
+                        // ======================================
+                        if (_focusedPosition != null && _focusedZoneId != null)
+                          Polygon(
+                            points: List.generate(12, (i) {
+                              final angle = (i * 30) * 3.1415 / 180;
+                              final dx = _pulseRadius * 0.000009 * math.cos(angle);
+                              final dy = _pulseRadius * 0.000009 * math.sin(angle);
+                              return LatLng(
+                                _focusedPosition!.latitude + dy,
+                                _focusedPosition!.longitude + dx,
+                              );
+                            }),
+                            color: Colors.orangeAccent.withOpacity(0.15),
+                            borderColor: Colors.orangeAccent,
+                            borderStrokeWidth: 2,
+                          ),
+                      ],
+                    ),
                     MarkerLayer(markers: markers),
                   ],
                 ),
               ),
             ),
             const SizedBox(width: 16),
+
 
             // 📋 Right Panel
             Expanded(flex: 2, child: _buildRightPanel()),
@@ -450,8 +787,256 @@ class _GeofencingPageState extends State<GeofencingPage>
     );
   }
 
+  Map<String, List<Map<String, dynamic>>> _groupSOSByPlace() {
+    final Map<String, List<Map<String, dynamic>>> grouped = {};
+
+    const double maxDistanceMeters = 10; // treat <10 meters = same location
+
+    for (var s in _sosZones) {
+      final place = s['placeName'] ?? 'Unknown Area';
+      final LatLng loc = LatLng(s['lat'], s['lng']);
+
+      bool inserted = false;
+
+      // check if there is already a group with same placeName & nearby location
+      for (var key in grouped.keys) {
+        final first = grouped[key]!.first;
+        final LatLng firstLoc = LatLng(first['lat'], first['lng']);
+
+        // only group if placeName matches
+        if (key == place) {
+          final double d = _distance(loc, firstLoc);
+
+          if (d <= maxDistanceMeters) {
+            grouped[key]!.add(s);
+            inserted = true;
+            break;
+          }
+        }
+      }
+
+      // If no existing group matched → create new group
+      if (!inserted) {
+        grouped.putIfAbsent(place, () => []);
+        grouped[place]!.add(s);
+      }
+    }
+
+    return grouped;
+  }
+
+
+  void _openSOSPopup(String place, List<Map<String, dynamic>> alerts) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            width: 450,
+
+            // ⭐ LIMIT HEIGHT (prevents overflow)
+            height: MediaQuery.of(context).size.height * 0.80,
+
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title
+                Text(
+                  "📍 $place",
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 15),
+
+                // ⭐ MAKE FULL CONTENT SCROLLABLE
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: alerts.map((s) {
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 20),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+
+                              // USERNAME & TITLE
+                              Text(
+                                "${s['username']} - ${s['reason']}",
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+
+                              // PROFILE IMAGE
+                              if (s['profileImage'] != null &&
+                                  s['profileImage'] != "")
+                                Center(
+                                  child: CircleAvatar(
+                                    radius: 35,
+                                    backgroundImage:
+                                    NetworkImage(s['profileImage']),
+                                  ),
+                                ),
+
+                              const SizedBox(height: 10),
+
+                              // DETAILS
+                              _infoRow(Icons.email, "Email", s['email']),
+                              _infoRow(Icons.phone, "Phone", s['phone']),
+                              _infoRow(Icons.calendar_today, "Birthdate",
+                                  s['birthdate']),
+                              _infoRow(Icons.home, "Address", s['address']),
+                              _infoRow(Icons.flag, "Nationality",
+                                  s['nationality']),
+
+                              const SizedBox(height: 8),
+                              // 🔥 SHOW CRIME TYPE (IF AVAILABLE)
+                              if (s['crimeType'] != null && s['crimeType'] != "")
+                                _infoRow(Icons.gavel, "Crime Type", s['crimeType']),
+
+                              const SizedBox(height: 10),
+
+// 🔥 SHOW PROOF (IMAGE OR VIDEO)
+                              if (s['proofUrl'] != null && s['proofUrl'] != "")
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      "SOS Proof:",
+                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                    ),
+                                    const SizedBox(height: 8),
+
+                                    // IMAGE
+                                    if (s['isVideo'] == false)
+                                      GestureDetector(
+                                        onTap: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (_) => Dialog(
+                                              child: Image.network(s['proofUrl']),
+                                            ),
+                                          );
+                                        },
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(10),
+                                          child: Image.network(
+                                            s['proofUrl'],
+                                            height: 180,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      ),
+
+                                    // VIDEO (thumbnail only)
+                                    // 🎥 VIDEO PROOF PLAYER
+                                    if (s['isVideo'] == true)
+                                      SizedBox(
+                                        height: 220,
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: FutureBuilder(
+                                            future: _initializeVideoPlayer(s['proofUrl']),
+                                            builder: (context, snapshot) {
+                                              if (snapshot.connectionState == ConnectionState.waiting) {
+                                                return const Center(child: CircularProgressIndicator());
+                                              }
+                                              if (snapshot.hasError) {
+                                                return const Center(child: Text("Error loading video"));
+                                              }
+
+                                              return Chewie(
+                                                controller: snapshot.data as ChewieController,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+
+                                  ],
+                                ),
+
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  const Icon(Icons.access_time,
+                                      size: 16, color: Colors.black54),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    s['timestamp'],
+                                    style: const TextStyle(
+                                        color: Colors.black87, fontSize: 13),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                // CLOSE BUTTON
+                Center(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("Close"),
+                  ),
+                )
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+// ⭐ Reusable info row widget
+  Widget _infoRow(IconData icon, String label, String? value) {
+    if (value == null || value.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.black54),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "$label: $value",
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
   // 📋 Right panel
   Widget _buildRightPanel() {
+    final groupedSOS = _groupSOSByPlace();
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -476,92 +1061,132 @@ class _GeofencingPageState extends State<GeofencingPage>
               color: Color(0xFF084C41),
             ),
           ),
-          const Divider(height: 24),
 
-          // 🧹 Fix Old Zones Button
-          ElevatedButton.icon(
-            onPressed: _cleanOldZones,
-            icon: const Icon(Icons.cleaning_services_rounded),
-            label: const Text("Fix Old Zones"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2E7D32),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+          const Divider(height: 2),
+
+          // CLEAN OLD ZONES BUTTON
+          const SizedBox(height: 16),
+
+          // ------------------------------
+          // MANUAL ZONES LIST
+          // ------------------------------
+          const SizedBox(height: 8),
+
+          const SizedBox(height: 20),
+
+          // ------------------------------
+          // SOS GROUPED SECTION
+          // ------------------------------
+          const Text(
+            "SOS Alerts (Automatically Detected)",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
             ),
           ),
-
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              const Icon(Icons.location_pin, color: Colors.deepOrange),
-              const SizedBox(width: 8),
-              Text(
-                "Total Zones: ${_zones.length}",
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, color: Colors.black87),
-              ),
-            ],
+          Text(
+            "SOS Alerts: ${_sosZones.length}",
+            style: const TextStyle(
+              color: Colors.black87,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+
+          // ------------------------------
+// SOS GROUPED SECTION
+// ------------------------------
           Expanded(
-            child: ListView.builder(
-              itemCount: _zones.length,
-              itemBuilder: (context, index) {
-                final zone = _zones[index];
-                final bool isFocused = _focusedZoneId == zone['id'];
-                return Container(
-                  margin:
-                  const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: isFocused
-                          ? [Color(0xFFFFE0B2), Color(0xFFFFCC80)]
-                          : [Color(0xFFFFF3E0), Color(0xFFFFEFD5)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.orange.withOpacity(0.25),
-                        blurRadius: 8,
-                        offset: const Offset(3, 3),
+            child: ListView(
+              children: groupedSOS.entries.map((entry) {
+                final place = entry.key;
+                final alerts = entry.value;
+
+                return GestureDetector(
+                  onTap: () => _openSOSPopup(place, alerts),   // 👈 POPUP
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 10),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFCDD2), Color(0xFFFFEBEE)],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
                       ),
-                    ],
-                  ),
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: Colors.deepOrange,
-                      child: Icon(Icons.warning_amber_rounded,
-                          color: Colors.white),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.redAccent.withOpacity(0.25),
+                          blurRadius: 8,
+                          offset: const Offset(3, 3),
+                        ),
+                      ],
                     ),
-                    title: Text(
-                      zone['name'],
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF084C41),
-                        fontSize: 16,
-                      ),
+
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+
+                        // 🔴 PLACE NAME + ALERT COUNT
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                "📍 $place",
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ),
+
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.redAccent,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                "${alerts.length} alerts",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        // 🗺️ VIEW ON MAP BUTTON
+                        ElevatedButton.icon(
+                          onPressed: () => _goToSOSGroupCenter(alerts),
+                          icon: const Icon(Icons.map, color: Colors.white),
+                          label: const Text(
+                            "View on Map",
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.redAccent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          ),
+                        ),
+                      ],
                     ),
-                    subtitle: Text(
-                      "Lat: ${zone['lat'].toStringAsFixed(4)}, Lng: ${zone['lng'].toStringAsFixed(4)}",
-                      style:
-                      TextStyle(color: Colors.grey.shade700, fontSize: 13),
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline,
-                          color: Color(0xFF1E88E5)),
-                      onPressed: () => _confirmDelete(
-                          zone['id'].toString(), zone['name'].toString()),
-                    ),
-                    onTap: () => _focusOnZone(zone),
                   ),
                 );
-              },
+
+              }).toList(),
             ),
           ),
+
         ],
       ),
     );
