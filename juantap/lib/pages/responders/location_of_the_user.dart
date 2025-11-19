@@ -36,11 +36,12 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
 
   Stream<Position>? _positionStream;
   String? _profileImage;
+  String? _placeName;   // ⭐ NEW FIELD
   bool _isLoadingRoute = false;
   double? _travelTimeMinutes;
   double? _travelDistanceKm;
 
-  // ✅ OpenRouteService API Key
+  // OpenRouteService API Key
   final String _orsApiKey =
       "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjZkNTQ2YzZmZmE0ZDQ0Yzc5OWFiMTQ3Yzg2ZTllZTI5IiwiaCI6Im11cm11cjY0In0=";
 
@@ -48,25 +49,43 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
   void initState() {
     super.initState();
     _userLocation = LatLng(widget.latitude, widget.longitude);
-    _fetchUserProfile();
+    _fetchUserInfo();
     _listenToResponderLocation();
   }
 
-  Future<void> _fetchUserProfile() async {
+  String? _fetchedUserName;
+
+  // ⭐ Fetch user profile + placeName
+  Future<void> _fetchUserInfo() async {
     try {
+      // Fetch user profile
       final snap =
       await FirebaseDatabase.instance.ref('users/${widget.userId}').get();
       if (snap.exists) {
         final data = Map<String, dynamic>.from(snap.value as Map);
         setState(() {
-          _profileImage = (data['profileImage'] != null &&
-              data['profileImage'].toString().isNotEmpty)
+          _profileImage =
+          (data['profileImage'] != null && data['profileImage'].toString().isNotEmpty)
               ? data['profileImage']
-              : 'https://i.imgur.com/8Km9tLL.jpg';
+              : 'assets/images/user_profile.png';
+
+          _fetchedUserName = data['username'] ?? widget.userName;
         });
       }
+
+      // ⭐ Fetch placeName from responder_alerts/<alertId>/location/placeName
+      final placeSnap = await FirebaseDatabase.instance
+          .ref('responder_alerts/${widget.alertId}/location/placeName')
+          .get();
+
+      if (placeSnap.exists) {
+        setState(() {
+          _placeName = placeSnap.value.toString();
+        });
+      }
+
     } catch (e) {
-      debugPrint("⚠️ Failed to fetch user profile: $e");
+      debugPrint("⚠️ Error fetching profile/placeName: $e");
     }
   }
 
@@ -113,7 +132,7 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     });
   }
 
-  // ✅ Accurate Lalamove-style route using ORS
+  // ⭐ Draw accurate Lalamove-style route
   Future<void> _drawNavigationRoute() async {
     if (_responderLocation == null) return;
 
@@ -131,7 +150,6 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
         final coords = route["geometry"]["coordinates"];
         final summary = route["properties"]["summary"];
 
-        // ✅ Correctly map lon, lat -> LatLng(lat, lon)
         final List<LatLng> routePoints = [];
         for (var c in coords) {
           final lon = c[0].toDouble();
@@ -182,7 +200,6 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
     });
   }
 
-  // ✅ Auto-follow camera as responder moves
   Future<void> _followResponder() async {
     if (_mapController == null || _responderLocation == null) return;
     await _mapController!.animateCamera(
@@ -210,13 +227,15 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
       if (p.longitude > maxLng) maxLng = p.longitude;
     }
 
-    await _mapController!.animateCamera(CameraUpdate.newLatLngBounds(
-      LatLngBounds(
-        southwest: LatLng(minLat, minLng),
-        northeast: LatLng(maxLat, maxLng),
+    await _mapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
+        ),
+        60,
       ),
-      60,
-    ));
+    );
   }
 
   String _formatTravelTime(double minutes) {
@@ -236,7 +255,7 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
         backgroundColor: const Color(0xFF2A9D8F),
         elevation: 0,
         leading: const BackButton(color: Colors.white),
-        title: const Text('Responder', style: TextStyle(color: Colors.white)),
+        title: const Text("Responder", style: TextStyle(color: Colors.white)),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -244,21 +263,28 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Location of the user',
+              "Location of the user",
               style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold),
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
+
             const SizedBox(height: 16),
+
             Center(
               child: SizedBox(
-                width: MediaQuery.of(context).size.width * 0.95, // ✅ Match modal width
+                width: MediaQuery.of(context).size.width * 0.95,
                 child: Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
-                      colors: [Color(0xFF25C09C), Color(0xFF2ECC71), Color(0xFFFF6B6B)],
+                      colors: [
+                        Color(0xFF25C09C),
+                        Color(0xFF2ECC71),
+                        Color(0xFFFF6B6B),
+                      ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
@@ -273,44 +299,65 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                   ),
                   child: Column(
                     children: [
-                      // 🧍 User info row
                       Row(
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(50),
-                            child: Image.network(
-                              _profileImage ?? 'https://i.imgur.com/8Km9tLL.jpg',
+                            child:
+                            Image.network(
+                              _profileImage ?? "",
                               width: 70,
                               height: 70,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                Icons.person,
-                                color: Colors.white,
-                                size: 60,
-                              ),
+                              errorBuilder: (_, __, ___) {
+                                return Image.asset(
+                                  'assets/images/user_profile.png',   // ⭐ DEFAULT PROFILE IMAGE
+                                  width: 70,
+                                  height: 70,
+                                  fit: BoxFit.cover,
+                                );
+                              },
                             ),
+
                           ),
                           const SizedBox(width: 15),
+
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  widget.userName,
+                                  _fetchedUserName ?? widget.userName,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                if (_travelTimeMinutes != null && _travelDistanceKm != null)
+
+                                // ⭐ NEW: placeName
+                                if (_placeName != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _placeName!,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+
+                                const SizedBox(height: 6),
+
+                                if (_travelTimeMinutes != null &&
+                                    _travelDistanceKm != null)
                                   Text(
                                     "ETA: ${_formatTravelTime(_travelTimeMinutes!)}  •  ${_travelDistanceKm!.toStringAsFixed(2)} km away",
                                     style: const TextStyle(
                                       color: Colors.white,
-                                      fontWeight: FontWeight.w600,
                                       fontSize: 14,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                               ],
@@ -321,7 +368,6 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
 
                       const SizedBox(height: 20),
 
-                      // 🗺️ Google Map Section
                       Stack(
                         children: [
                           Container(
@@ -335,7 +381,8 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                                 target: _userLocation,
                                 zoom: 15,
                               ),
-                              onMapCreated: (controller) => _mapController = controller,
+                              onMapCreated: (controller) =>
+                              _mapController = controller,
                               markers: _markers,
                               polylines: _polylines,
                               myLocationEnabled: true,
@@ -346,7 +393,9 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                           if (_isLoadingRoute)
                             const Positioned.fill(
                               child: Center(
-                                child: CircularProgressIndicator(color: Color(0xFF2ECC71)),
+                                child: CircularProgressIndicator(
+                                  color: Color(0xFF2ECC71),
+                                ),
                               ),
                             ),
                         ],
@@ -354,7 +403,6 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
 
                       const SizedBox(height: 12),
 
-                      // 🧭 Route instruction card
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
@@ -363,7 +411,7 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Text(
-                          'Follow the blue route to reach the user, similar to navigation apps.',
+                          "Follow the blue route to reach the user, similar to navigation apps.",
                           style: TextStyle(
                             fontSize: 13,
                             color: Colors.black87,
@@ -374,7 +422,6 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
 
                       const SizedBox(height: 25),
 
-                      // 📝 Action Report Button
                       ElevatedButton.icon(
                         onPressed: () {
                           Navigator.push(
@@ -390,7 +437,8 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF1E8449),
-                          padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 50, vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(30),
                           ),
@@ -411,7 +459,6 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                 ),
               ),
             ),
-
           ],
         ),
       ),

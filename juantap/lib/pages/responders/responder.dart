@@ -14,8 +14,6 @@ import 'send_alert_response.dart';
 import 'incident_reports.dart';
 import 'package:juantap/pages/users/login.dart';
 import 'package:juantap/pages/responders/edit_responder_profile.dart';
-import '../responders/responder_chat_list.dart';
-
 
 class ResponderDashboard extends StatelessWidget {
   const ResponderDashboard({super.key});
@@ -55,15 +53,20 @@ class _MyHomePageState extends State<MyHomePage> {
 
   bool _isMounted = true;
   bool _popupActive = false;
+  bool _popupDisabled = false; // 🔥 global flag for this responder
 
   AudioPlayer? _player;
   Timer? _vibrationTimer;
   Timer? _cleanupTimer;
 
+  // 🧠 queue of alerts that still want a popup (if popups allowed)
+  List<Map<String, dynamic>> _alertQueue = [];
+
   @override
   void initState() {
     super.initState();
     _fetchResponderData();
+    _loadPopupSettings();       // 🔥 load global popupDisabled flag
     _listenToResponderAlerts();
     _cleanupTimer =
         Timer.periodic(const Duration(minutes: 10), (_) => _removeExpiredAlerts());
@@ -91,6 +94,36 @@ class _MyHomePageState extends State<MyHomePage> {
         _profileImageUrl = data['profileImage'];
       });
     }
+  }
+
+  // 🔥 Load whether this responder has disabled popups
+  Future<void> _loadPopupSettings() async {
+    if (user == null) return;
+    final snap = await FirebaseDatabase.instance
+        .ref('responder_settings/${user!.uid}/popupDisabled')
+        .get();
+
+    if (!_isMounted) return;
+    if (snap.exists && snap.value == true) {
+      setState(() {
+        _popupDisabled = true;
+      });
+    }
+  }
+
+  // 🔥 Turn OFF all future popups for this responder
+  Future<void> _disablePopupsGlobally() async {
+    if (user == null) return;
+    await FirebaseDatabase.instance
+        .ref('responder_settings/${user!.uid}/popupDisabled')
+        .set(true);
+
+    if (!_isMounted) return;
+    setState(() {
+      _popupDisabled = true;
+      _alertQueue.clear(); // clear any queued popups
+      _popupActive = false;
+    });
   }
 
   // ✅ Upload profile image to Cloudinary
@@ -148,11 +181,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // 🧠 Keep this list at the top of your class:
-  List<Map<String, dynamic>> _alertQueue = [];
-
-
-// ✅ Listen to responder_alerts (Main listener)
+  // ✅ Listen to responder_alerts (Main listener)
   void _listenToResponderAlerts() {
     final ref = FirebaseDatabase.instance.ref('responder_alerts');
 
@@ -161,12 +190,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
       final alertId = event.snapshot.key ?? 'unknown_alert';
       final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-
-      // 🛑 Skip dismissed alerts
-      if (data['dismissedBy'] != null &&
-          data['dismissedBy'][user!.uid] == true) {
-        return;
-      }
 
       final username = data['username'] ?? 'Unknown User';
       final userId = data['userId'] ?? '';
@@ -207,23 +230,26 @@ class _MyHomePageState extends State<MyHomePage> {
         },
         'latitude': lat,
         'longitude': lng,
-
-        // 🔥 NEW FIELDS
         'proofUrl': data['proofUrl'] ?? '',
         'isVideo': data['isVideo'] ?? false,
         'crimeType': data['crimeType'] ?? 'General Alert',
       };
 
-
-      // Prevent duplicates
+      // Prevent duplicates in dashboard list
       final exists = recentAlerts.any(
             (a) => a['userId'] == userId && a['timestamp'] == timestampStr,
       );
       if (exists) return;
 
-      setState(() => recentAlerts.add(alert));
+      // ✅ ALWAYS show alert card in dashboard list
+      setState(() {
+        recentAlerts.add(alert);
+      });
 
-      // 🟢 Queue this alert
+      // 🔕 If popups globally disabled → do NOT show any dialog
+      if (_popupDisabled) return;
+
+      // 🟢 Queue this alert for popup
       _alertQueue.add(alert);
 
       // If no popup is active, show the first in queue
@@ -233,9 +259,10 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-
-// ✅ Function to show next alert in queue
+  // ✅ Function to show next alert in queue
   void _showNextAlert(BuildContext parentContext) {
+    // If globally disabled, never show popup again
+    if (_popupDisabled) return;
     if (_alertQueue.isEmpty || _popupActive) return;
 
     final alert = _alertQueue.first;
@@ -287,29 +314,30 @@ class _MyHomePageState extends State<MyHomePage> {
           ],
         ),
         actions: [
-          // ❌ Dismiss — show next alert
+          // ❌ Dismiss — stop ALL popups
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
+            onPressed: () async {
               _stopAlertFeedbackImmediately();
               Navigator.pop(dialogContext);
 
-              // Remove the dismissed alert
-              _alertQueue.removeAt(0);
+              // Optional: still mark dismissedBy for this alert
+              if (user != null) {
+                await FirebaseDatabase.instance
+                    .ref('responder_alerts/$alertId/dismissedBy/${user!.uid}')
+                    .set(true);
+              }
 
-              // Allow next alert
-              _popupActive = false;
-              Future.delayed(const Duration(milliseconds: 200), () {
-                _showNextAlert(parentContext);
-              });
+              // 🔥 Disable ALL future popups for this responder
+              await _disablePopupsGlobally();
             },
             child: const Text('Dismiss'),
           ),
 
-          // ✅ Accept — go to SendAlertResponsePage & clear queue
+          // ✅ Accept — also stop ALL popups, but record it
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
@@ -319,17 +347,22 @@ class _MyHomePageState extends State<MyHomePage> {
               _stopAlertFeedbackImmediately();
               Navigator.pop(dialogContext);
 
-              // 🔥 Mark this alert as dismissed for this specific responder
-              await FirebaseDatabase.instance
-                  .ref('responder_alerts/$alertId/dismissedBy/${user!.uid}')
-                  .set(true);
+              if (user != null) {
+                await FirebaseDatabase.instance
+                    .ref('responder_alerts/$alertId/dismissedBy/${user!.uid}')
+                    .set(true);
+              }
 
-              _alertQueue.removeAt(0);
-              _popupActive = false;
+              // 🔥 Disable ALL future popups (same as Dismiss)
+              await _disablePopupsGlobally();
 
-              Future.delayed(const Duration(milliseconds: 200), () {
-                _showNextAlert(parentContext);
-              });
+              // (Optional) If you want immediate navigation when accepting:
+              Navigator.push(
+                parentContext,
+                MaterialPageRoute(
+                  builder: (_) => SendAlertResponsePage(alertData: alert),
+                ),
+              );
             },
             child: const Text('Accept'),
           ),
@@ -390,15 +423,20 @@ class _MyHomePageState extends State<MyHomePage> {
         title: const Text('Confirm Logout'),
         content: const Text('Are you sure you want to log out?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Logout')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Logout')),
         ],
       ),
     );
     if (shouldLogout == true) {
       await FirebaseAuth.instance.signOut();
       if (context.mounted) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => const LoginPage()));
       }
     }
   }
@@ -436,59 +474,37 @@ class _MyHomePageState extends State<MyHomePage> {
                 backgroundColor: Colors.white,
                 backgroundImage: _profileImageUrl != null
                     ? NetworkImage(_profileImageUrl!)
-                    : const AssetImage('assets/shield.png')
-                as ImageProvider,
+                    : const AssetImage('assets/shield.png') as ImageProvider,
               ),
             ),
           ),
 
-          // ----------------------------------------
           // DASHBOARD
-          // ----------------------------------------
           ListTile(
             leading: const Icon(Icons.dashboard, color: Colors.white),
-            title: const Text('Dashboard', style: TextStyle(color: Colors.white)),
+            title:
+            const Text('Dashboard', style: TextStyle(color: Colors.white)),
             onTap: () => Navigator.pop(context),
           ),
-
-          // ----------------------------------------
-          // 🚀 NEW — MESSAGES
-          // ----------------------------------------
+          // INCIDENT REPORTS
           ListTile(
-            leading: const Icon(Icons.message, color: Colors.white),
-            title: const Text('Messages', style: TextStyle(color: Colors.white)),
+            leading: const Icon(Icons.report, color: Colors.white),
+            title: const Text('Incident Reports',
+                style: TextStyle(color: Colors.white)),
             onTap: () {
-              Navigator.pop(context);
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => ResponderChatList(
-                    responderId: FirebaseAuth.instance.currentUser!.uid,
-                  ),
-                ),
+                    builder: (_) => const IncidentReportsResponder()),
               );
             },
           ),
 
-          // ----------------------------------------
-          // INCIDENT REPORTS
-          // ----------------------------------------
-          ListTile(
-            leading: const Icon(Icons.report, color: Colors.white),
-            title:
-            const Text('Incident Reports', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const IncidentReportsResponder()),
-              );
-            },
-          ),
-
+          // EDIT PROFILE
           ListTile(
             leading: const Icon(Icons.account_circle, color: Colors.white),
-            title:
-            const Text('Edit Profile', style: TextStyle(color: Colors.white)),
+            title: const Text('Edit Profile',
+                style: TextStyle(color: Colors.white)),
             onTap: () {
               Navigator.push(
                 context,
@@ -504,14 +520,14 @@ class _MyHomePageState extends State<MyHomePage> {
           // LOGOUT
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.white),
-            title: const Text('Logout', style: TextStyle(color: Colors.white)),
+            title:
+            const Text('Logout', style: TextStyle(color: Colors.white)),
             onTap: _logout,
           ),
         ],
       ),
     );
   }
-
 
   Widget _buildAlertsList() {
     return Padding(
@@ -553,8 +569,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   SizedBox(
                     height: 160,
                     child: GoogleMap(
-                      initialCameraPosition:
-                      CameraPosition(target: LatLng(lat, lng), zoom: 14),
+                      initialCameraPosition: CameraPosition(
+                          target: LatLng(lat, lng), zoom: 14),
                       markers: {
                         Marker(
                           markerId: MarkerId(item['name']!),
@@ -607,7 +623,9 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
               await _saveProfile();

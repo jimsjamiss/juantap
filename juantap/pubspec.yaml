@@ -48,11 +48,13 @@ dependencies:
   speech_to_text: ^7.0.0
   flutter_background_service: ^5.0.5
   flutter_background_service_android: ^6.0.1
-  shared_preferences: ^2.3.2
   flutter_map: ^7.0.0
   latlong2: ^0.9.0
   geocoding: ^2.0.5
+  chewie: ^1.7.0
   video_player: ^2.8.2
+  package_info_plus: 4.0.2
+  shared_preferences: 2.2.2
 
 
 
@@ -67,6 +69,7 @@ dependencies:
 
 dependency_overrides:
   web: ^1.0.0
+  shared_preferences_android: 2.4.11
 
 dev_dependencies:
   flutter_test:

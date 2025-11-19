@@ -2,9 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'contact_lists_requests.dart';
-import 'chat_screen.dart';
-import 'chatList_screen.dart';
+
 
 
 class ContactListPage extends StatefulWidget {
@@ -19,7 +17,6 @@ class _ContactListPageState extends State<ContactListPage> {
   List<Map<String, dynamic>> _searchResults = [];
   Map<String, dynamic> _requests = {};
   bool _isRequestTab = false;
-  bool _isMessagesTab = false;
   late String myId;
 
   StreamSubscription<DatabaseEvent>? _contactListener;
@@ -190,13 +187,12 @@ class _ContactListPageState extends State<ContactListPage> {
                         onTap: () {
                           setState(() {
                             _isRequestTab = false;
-                            _isMessagesTab = false;
                           });
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                           decoration: BoxDecoration(
-                            color: (!_isRequestTab && !_isMessagesTab)
+                            color: (!_isRequestTab)
                                 ? Colors.white
                                 : Colors.transparent,
                             borderRadius: BorderRadius.circular(8),
@@ -204,34 +200,9 @@ class _ContactListPageState extends State<ContactListPage> {
                           child: Text(
                             'Contacts',
                             style: TextStyle(
-                              color: (!_isRequestTab && !_isMessagesTab)
+                              color: (!_isRequestTab)
                                   ? Colors.black
                                   : Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 8),
-
-                      // MESSAGES TAB (NEW)
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _isRequestTab = false;
-                            _isMessagesTab = true;
-                          });
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: (_isMessagesTab) ? Colors.white : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Messages',
-                            style: TextStyle(
-                              color: _isMessagesTab ? Colors.black : Colors.white,
                             ),
                           ),
                         ),
@@ -244,7 +215,6 @@ class _ContactListPageState extends State<ContactListPage> {
                         onTap: () {
                           setState(() {
                             _isRequestTab = true;
-                            _isMessagesTab = false;
                           });
                           _loadRequests();
                         },
@@ -323,11 +293,6 @@ class _ContactListPageState extends State<ContactListPage> {
                   );
                 }).toList(),
               )
-
-              // 🔵 NEW: MESSAGES TAB LOGIC
-                  : _isMessagesTab
-                  ? ChatListScreen(myId: myId) // <-- Your chat list UI
-
               // CONTACTS TAB (DEFAULT)
                   : filteredResults.isEmpty
                   ? Center(

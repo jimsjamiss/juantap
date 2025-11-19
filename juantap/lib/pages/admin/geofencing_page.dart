@@ -3,10 +3,16 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:async';
+import 'package:latlong2/latlong.dart' show Distance;
+import 'dart:math' as math;
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+
 
 class GeofencingPage extends StatefulWidget {
   const GeofencingPage({super.key});
-
   @override
   State<GeofencingPage> createState() => _GeofencingPageState();
 }
@@ -15,11 +21,11 @@ class _GeofencingPageState extends State<GeofencingPage>
     with SingleTickerProviderStateMixin {
   late final DatabaseReference _zonesRef;
   final MapController _mapCtrl = MapController();
-
+  final Distance _distance = Distance();
+  final List<Map<String, dynamic>> _sosZones = [];
   final List<Map<String, dynamic>> _zones = [];
   final _labelCtrl = TextEditingController();
-  double _radius = 150;
-
+  double _radius = 40;
   String? _focusedZoneId;
   LatLng? _focusedPosition;
   double _pulseRadius = 0;
@@ -30,6 +36,7 @@ class _GeofencingPageState extends State<GeofencingPage>
     super.initState();
     _zonesRef = FirebaseDatabase.instance.ref('danger_zones');
     _loadZones();
+    _loadSOSZones();
   }
 
   @override
@@ -42,8 +49,10 @@ class _GeofencingPageState extends State<GeofencingPage>
   void _loadZones() {
     _zonesRef.onValue.listen((event) {
       if (!event.snapshot.exists) return;
+
       final Map<dynamic, dynamic> zones =
       Map<dynamic, dynamic>.from(event.snapshot.value as Map);
+
       final List<Map<String, dynamic>> loadedZones = [];
 
       zones.forEach((id, data) {
@@ -54,6 +63,9 @@ class _GeofencingPageState extends State<GeofencingPage>
           'lat': (z['lat'] as num?)?.toDouble() ?? 0,
           'lng': (z['lng'] as num?)?.toDouble() ?? 0,
           'radius': (z['radius'] as num?)?.toDouble() ?? 100,
+          'severity': z['severity'] ?? 'low',       // ⭐ NEW
+          'alert_count': z['alert_count'] ?? 0,     // ⭐ NEW
+          'polygon': z['polygon'] ?? [],            // ⭐ NEW
         });
       });
 
@@ -65,8 +77,325 @@ class _GeofencingPageState extends State<GeofencingPage>
     });
   }
 
-  // 💾 Save new zone (fixed)
-  Future<void> _saveZone(LatLng center, String label, double radius) async {
+
+
+  void _loadSOSZones() {
+    final sosRef = FirebaseDatabase.instance.ref('only_sos_alerts');
+
+    sosRef.onValue.listen((event) {
+      if (!event.snapshot.exists) return;
+
+      final Map<dynamic, dynamic> users =
+      Map<dynamic, dynamic>.from(event.snapshot.value as Map);
+
+      final List<Map<String, dynamic>> loadedSOS = [];
+
+      users.forEach((userId, alerts) {
+        final Map<dynamic, dynamic> alertMap =
+        Map<dynamic, dynamic>.from(alerts);
+
+        alertMap.forEach((alertId, data) {
+          final a = Map<String, dynamic>.from(data);
+          if (a['location'] == null) return;
+
+          final loc = Map<String, dynamic>.from(a['location']);
+
+          loadedSOS.add({
+            'id': alertId,
+            'userId': userId,
+            'username': a['username'] ?? 'Unknown',
+            'reason': a['reason'] ?? 'SOS Alert',
+            'crimeType': a['crimeType'] ?? 'Not specified',
+            'proofUrl': a['proofUrl'] ?? '',
+            'isVideo': a['isVideo'] ?? false,
+            'address': a['address'] ?? '',
+            'birthdate': a['birthdate'] ?? '',
+            'email': a['email'] ?? '',
+            'nationality': a['nationality'] ?? '',
+            'phone': a['phone'] ?? '',
+            'profileImage': a['profileImage'] ?? '',
+            'lat': (loc['lat'] as num).toDouble(),
+            'lng': (loc['lng'] as num).toDouble(),
+            'placeName': loc['placeName'] ?? 'Unknown area',
+            'timestamp': a['timestamp'] ?? '',
+          });
+        });
+      });
+
+      setState(() {
+        _sosZones
+          ..clear()
+          ..addAll(loadedSOS);
+      });
+
+      _detectDangerClusters();
+
+    });
+  }
+
+  Color getPolygonColor(Map<String, dynamic> z) {
+    final severity = z["severity"] ?? "low";
+
+    switch (severity) {
+      case "high":
+        return Colors.red.withOpacity(0.35);
+      case "medium":
+        return Colors.orange.withOpacity(0.35);
+      default:
+        return Colors.yellow.withOpacity(0.35);
+    }
+  }
+
+  Future<ChewieController> _initializeVideoPlayer(String url) async {
+    final videoPlayerController =
+    VideoPlayerController.networkUrl(Uri.parse(url));
+    await videoPlayerController.initialize();
+
+    return ChewieController(
+      videoPlayerController: videoPlayerController,
+      autoPlay: false,
+      looping: false,
+      allowFullScreen: true,
+      allowPlaybackSpeedChanging: true,
+      autoInitialize: true,
+    );
+  }
+
+  // ⭐ Creates the floating threat label for each polygon (Design B + C)
+  Widget buildThreatLabel(Map<String, dynamic> z) {
+    final severity = (z['severity'] ?? 'low') as String;
+    final count = (z['alert_count'] ?? 0) as int;
+
+    String text;
+    Color bg;
+    if (severity == 'high') {
+      text = 'HIGH THREAT ⚠️';
+      bg = Colors.red;
+    } else if (severity == 'medium') {
+      text = 'MEDIUM THREAT ⚠️';
+      bg = Colors.orange;
+    } else {
+      text = 'LOW THREAT ⚠️';
+      bg = Colors.yellow.shade800;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bg.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$count SOS alerts',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
+  void _goToSOSGroupCenter(List<Map<String, dynamic>> alerts) {
+    if (alerts.isEmpty) return;
+
+    final double avgLat = alerts
+        .map((a) => a['lat'] as double)
+        .reduce((a, b) => a + b) /
+        alerts.length;
+
+    final double avgLng = alerts
+        .map((a) => a['lng'] as double)
+        .reduce((a, b) => a + b) /
+        alerts.length;
+
+    final LatLng target = LatLng(avgLat, avgLng);
+
+    _mapCtrl.move(target, 17);
+  }
+
+  void _detectDangerClusters() async {
+    if (_sosZones.length < 3) return;
+
+    const double clusterRadius = 120;
+    List<Map<String, dynamic>> processed = [];
+
+    for (var p in _sosZones) {
+      if (processed.contains(p)) continue;
+
+      List<Map<String, dynamic>> cluster = [];
+
+      // 🔍 Find cluster members
+      for (var q in _sosZones) {
+        final double d = _distance(
+          LatLng(p['lat'], p['lng']),
+          LatLng(q['lat'], q['lng']),
+        );
+
+        if (d <= clusterRadius) {
+          cluster.add(q);
+        }
+      }
+
+      if (cluster.length >= 1) {
+        // 🧮 Compute cluster center
+        double avgLat = cluster
+            .map((c) => c['lat'] as double)
+            .reduce((a, b) => a + b) /
+            cluster.length;
+
+        double avgLng = cluster
+            .map((c) => c['lng'] as double)
+            .reduce((a, b) => a + b) /
+            cluster.length;
+
+        double maxDist = 0;
+
+        for (var c in cluster) {
+          double d2 = _distance(
+            LatLng(avgLat, avgLng),
+            LatLng(c['lat'], c['lng']),
+          );
+          if (d2 > maxDist) maxDist = d2;
+        }
+
+        final double finalRadius =
+        (maxDist + 5).clamp(10, 40).toDouble();
+
+        // 🔎 Check if zone already exists (avoid duplicates)
+        final exists = _zones.any((z) =>
+        (z['lat'] - avgLat).abs() < 0.0004 &&
+            (z['lng'] - avgLng).abs() < 0.0004);
+
+        if (!exists) {
+          final id = _zonesRef.push().key!;
+
+          final polygon = _generateSmallPolygon(avgLat, avgLng, 10);
+
+          // ⭐⭐⭐ ADD SEVERITY LOGIC HERE ⭐⭐⭐
+          String severity;
+          if (cluster.length >= 9) {
+            severity = "high";
+          } else if (cluster.length >= 6) {
+            severity = "medium";
+          } else {
+            severity = "low";
+          }
+          // ⭐⭐⭐ END OF SEVERITY LOGIC ⭐⭐⭐
+
+          // 💾 Save new auto danger zone WITH severity
+          await _zonesRef.child(id).set({
+            'name': cluster.first['placeName'] ?? 'Auto Danger Zone',
+            'lat': avgLat,
+            'lng': avgLng,
+            'severity': severity,           // ⭐ NEW
+            'alert_count': cluster.length,  // ⭐ NEW
+            'polygon': polygon
+                .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+                .toList(),
+            'autoGenerated': true,
+            'created_at': DateTime.now().toIso8601String(),
+            'sos_details': cluster.map((s) {
+              return {
+                'id': s['id'],
+                'userId': s['userId'],
+                'username': s['username'],
+                'reason': s['reason'],
+                'lat': s['lat'],
+                'lng': s['lng'],
+                'placeName': s['placeName'],
+                'timestamp': s['timestamp'],
+              };
+            }).toList(),
+          });
+
+          print("🔥 Auto-danger polygon created at $avgLat, $avgLng (Severity: $severity)");
+        }
+
+        processed.addAll(cluster);
+      }
+    }
+  }
+
+
+  // ======================================================
+  // SMALL CUSTOM POLYGON GENERATOR (adjustable meters)
+  // ======================================================
+  List<LatLng> _generateSmallPolygon(
+      double lat, double lng, double meterRadius) {
+    const double scale = 0.000009; // degrees per meter
+
+    return List.generate(12, (i) {
+      final angle = i * 30 * math.pi / 180;
+      final dx = meterRadius * scale * math.cos(angle);
+      final dy = meterRadius * scale * math.sin(angle);
+      return LatLng(lat + dy, lng + dx);
+    });
+  }
+
+  // ===============================
+  // ORS Isochrone Polygon Generator
+  // ===============================
+  Future<List<LatLng>> _getORSIsochronePolygon(
+      double lat, double lng) async {
+    const orsApiKey =
+        "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjZkNTQ2YzZmZmE0ZDQ0Yzc5OWFiMTQ3Yzg2ZTllZTI5IiwiaCI6Im11cm11cjY0In0=";
+
+    final url = Uri.parse(
+        "https://api.openrouteservice.org/v2/isochrones/foot-walking");
+
+    final body = {
+      "locations": [
+        [lng, lat]
+      ],
+      "range": [10],
+      "range_type": "distance",
+      "units": "m"
+    };
+
+    final response = await http.post(
+      url,
+      headers: {
+        "Authorization": orsApiKey,
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode != 200) {
+      print("ORS Isochrone Error: ${response.body}");
+      return [];
+    }
+
+    final data = jsonDecode(response.body);
+    final coords = data["features"][0]["geometry"]["coordinates"][0];
+
+    List<LatLng> polygon = coords
+        .map<LatLng>((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
+        .toList();
+
+    print("🔶 ORS polygon generated with ${polygon.length} points");
+    return polygon;
+  }
+
+  // 💾 Save new zone
+  Future<void> _saveZone(
+      LatLng center, String label, double radius) async {
     final id = _zonesRef.push().key!;
 
     await _zonesRef.child(id).set({
@@ -74,13 +403,13 @@ class _GeofencingPageState extends State<GeofencingPage>
       'lat': center.latitude,
       'lng': center.longitude,
       'radius': radius,
+      'autoGenerated': false,
       'created_at': DateTime.now().toIso8601String(),
-      'report_count': 0, // ✅ new counter field
-      'reports': {}, // ✅ proper structure
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('✅ Danger zone added successfully')),
+      const SnackBar(
+          content: Text('✅ Danger zone added successfully')),
     );
   }
 
@@ -89,26 +418,31 @@ class _GeofencingPageState extends State<GeofencingPage>
     final snapshot = await _zonesRef.get();
 
     if (snapshot.exists) {
-      final zones = Map<String, dynamic>.from(snapshot.value as Map);
+      final zones =
+      Map<String, dynamic>.from(snapshot.value as Map);
 
       int fixedCount = 0;
+
       for (var entry in zones.entries) {
         final id = entry.key;
-        final zone = Map<String, dynamic>.from(entry.value);
+        final zone =
+        Map<String, dynamic>.from(entry.value);
 
         if (zone["reports"] is Map &&
-            (zone["reports"] as Map).containsKey("reports_count")) {
+            (zone["reports"] as Map)
+                .containsKey("reports_count")) {
           await _zonesRef.child(id).update({
-            "reports": {}, // ✅ clean structure
-            "report_count": 0, // ✅ separate count field
+            "reports": {},
+            "report_count": 0,
           });
+
           fixedCount++;
         }
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("🧹 Fixed $fixedCount old zone(s) successfully!"),
+          content: Text("🧹 Fixed $fixedCount old zone(s)"),
           backgroundColor: Colors.green,
         ),
       );
@@ -118,18 +452,41 @@ class _GeofencingPageState extends State<GeofencingPage>
   // 🗑️ Delete zone
   Future<void> _deleteZone(String id) async {
     await _zonesRef.child(id).remove();
+
     setState(() => _zones.removeWhere((z) => z['id'] == id));
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('🗑️ Zone deleted successfully')),
     );
   }
 
-  // ⚠️ Confirmation delete popup
+
+  Future<void> _refreshAutoDangerZones() async {
+    await _zonesRef.remove();        // Delete ALL zones from Firebase
+    setState(() {
+      _zones.clear();                // Clear frontend
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("🔄 All danger zones removed. Regenerating automatically..."),
+        backgroundColor: Colors.teal,
+      ),
+    );
+
+    // Recompute new zones based only on SOS alerts
+    _detectDangerClusters();
+  }
+
+
+
+  // ⚠️ Delete confirmation modal
   void _confirmDelete(String id, String name) {
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
         child: Container(
           width: 350,
           padding: const EdgeInsets.all(24),
@@ -144,7 +501,7 @@ class _GeofencingPageState extends State<GeofencingPage>
               BoxShadow(
                 color: Colors.greenAccent.withOpacity(0.2),
                 blurRadius: 10,
-                offset: const Offset(3, 4),
+                offset: Offset(3, 4),
               ),
             ],
           ),
@@ -183,17 +540,23 @@ class _GeofencingPageState extends State<GeofencingPage>
                     },
                     icon: const Icon(Icons.delete_forever_rounded,
                         color: Colors.white, size: 18),
-                    label: const Text("Delete",
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14)),
+                    label: const Text(
+                      "Delete",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.redAccent,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30)),
+                        borderRadius: BorderRadius.circular(30),
+                      ),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 10),
+                        horizontal: 24,
+                        vertical: 10,
+                      ),
                       elevation: 6,
                     ),
                   ),
@@ -201,22 +564,27 @@ class _GeofencingPageState extends State<GeofencingPage>
                   OutlinedButton(
                     onPressed: () => Navigator.pop(ctx),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFF1E88E5)),
+                      side: const BorderSide(
+                          color: Color(0xFF1E88E5)),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30)),
+                        borderRadius: BorderRadius.circular(30),
+                      ),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
                     ),
                     child: const Text(
                       "Cancel",
                       style: TextStyle(
-                          color: Color(0xFF1E88E5),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14),
+                        color: Color(0xFF1E88E5),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                 ],
-              ),
+              )
             ],
           ),
         ),
@@ -225,127 +593,18 @@ class _GeofencingPageState extends State<GeofencingPage>
   }
 
   // 📍 Add zone modal
-  void _openAddZoneDialog(LatLng latLng) {
-    double tempRadius = _radius;
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFFF9FFF9), Color(0xFFE8FFF3)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-          ),
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom,
-            top: 24,
-            left: 20,
-            right: 20,
-          ),
-          child: StatefulBuilder(
-            builder: (context, setModalState) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    "New Danger Zone",
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF084C41),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  TextField(
-                    controller: _labelCtrl,
-                    decoration: InputDecoration(
-                      prefixIcon:
-                      const Icon(Icons.label_outline, color: Colors.black54),
-                      labelText: "Zone Label (e.g. High Crime Area)",
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      fillColor: Colors.white,
-                      filled: true,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.remove, color: Colors.redAccent),
-                        onPressed: () => setModalState(() =>
-                        tempRadius = (tempRadius - 10).clamp(50, 1000)),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          min: 50,
-                          max: 1000,
-                          divisions: 95,
-                          value: tempRadius,
-                          activeColor: Colors.teal,
-                          onChanged: (v) => setModalState(() => tempRadius = v),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.add, color: Colors.green),
-                        onPressed: () => setModalState(() =>
-                        tempRadius = (tempRadius + 10).clamp(50, 1000)),
-                      ),
-                      Text("${tempRadius.toStringAsFixed(0)} m"),
-                    ],
-                  ),
-                  const SizedBox(height: 25),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E88E5),
-                      elevation: 8,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(40),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 40, vertical: 14),
-                    ),
-                    icon: const Icon(Icons.save, color: Colors.white),
-                    label: const Text(
-                      "Save Zone",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      setState(() => _radius = tempRadius);
-                      _saveZone(latLng, _labelCtrl.text.trim(), tempRadius);
-                      _labelCtrl.clear();
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
 
-  // 🗺️ Tap to add
-  void _onTap(LatLng latLng) => _openAddZoneDialog(latLng);
+  // 🗺️ Tap handler
+
 
   // 🎯 Focus zone animation
   void _focusOnZone(Map<String, dynamic> zone) {
     final LatLng target = LatLng(zone['lat'], zone['lng']);
     final double radius = zone['radius'];
+
     _mapCtrl.move(target, 17);
+
     setState(() {
       _focusedZoneId = zone['id'];
       _focusedPosition = target;
@@ -353,41 +612,67 @@ class _GeofencingPageState extends State<GeofencingPage>
     });
 
     _pulseTimer?.cancel();
-    _pulseTimer = Timer.periodic(const Duration(milliseconds: 60), (timer) {
-      setState(() {
-        _pulseRadius += 8;
-        if (_pulseRadius >= radius) _pulseRadius = 0;
-      });
-    });
+    _pulseTimer = Timer.periodic(
+      const Duration(milliseconds: 60),
+          (timer) {
+        setState(() {
+          _pulseRadius += 8;
+          if (_pulseRadius >= radius) _pulseRadius = 0;
+        });
+      },
+    );
   }
+
 
   @override
   Widget build(BuildContext context) {
     const defaultCenter = LatLng(10.3236, 123.9221);
 
-    final List<Marker> markers = _zones.map((z) {
-      final bool isFocused = z['id'] == _focusedZoneId;
-      return Marker(
-        width: isFocused ? 50 : 40,
-        height: isFocused ? 50 : 40,
-        point: LatLng(z['lat'], z['lng']),
-        child: Icon(
-          Icons.warning_amber_rounded,
-          color: isFocused ? Colors.orangeAccent : Colors.deepOrange,
-          size: isFocused ? 48 : 36,
-        ),
-      );
-    }).toList();
+    final List<Marker> markers = [
+      // Manual danger zones
+      ..._zones.map((z) {
+        final bool isFocused = z['id'] == _focusedZoneId;
+
+        return Marker(
+          width: isFocused ? 50 : 40,
+          height: isFocused ? 50 : 40,
+          point: LatLng(z['lat'], z['lng']),
+          child: Icon(
+            Icons.warning_amber_rounded,
+            color: isFocused
+                ? Colors.orangeAccent
+                : Colors.deepOrange,
+            size: isFocused ? 48 : 36,
+          ),
+        );
+      }),
+
+      // SOS danger points
+      ..._sosZones.map((s) {
+        return Marker(
+          width: 40,
+          height: 40,
+          point: LatLng(s['lat'], s['lng']),
+          child: const Icon(
+            Icons.location_history,
+            color: Colors.red,
+            size: 38,
+          ),
+        );
+      }),
+    ];
 
     final List<CircleMarker> circles = [
-      ..._zones.map((z) => CircleMarker(
-        point: LatLng(z['lat'], z['lng']),
-        color: Colors.orange.withOpacity(0.25),
-        borderStrokeWidth: 2,
-        borderColor: Colors.deepOrange,
-        useRadiusInMeter: true,
-        radius: z['radius'],
-      )),
+      ..._zones.map(
+            (z) => CircleMarker(
+          point: LatLng(z['lat'], z['lng']),
+          color: Colors.orange.withOpacity(0.25),
+          borderStrokeWidth: 2,
+          borderColor: Colors.deepOrange,
+          useRadiusInMeter: true,
+          radius: z['radius'],
+        ),
+      ),
       if (_focusedPosition != null && _focusedZoneId != null)
         CircleMarker(
           point: _focusedPosition!,
@@ -402,7 +687,11 @@ class _GeofencingPageState extends State<GeofencingPage>
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFC8F4E4), Color(0xFFA7E2C9), Color(0xFF7FD1AE)],
+          colors: [
+            Color(0xFFC8F4E4),
+            Color(0xFFA7E2C9),
+            Color(0xFF7FD1AE),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -411,7 +700,7 @@ class _GeofencingPageState extends State<GeofencingPage>
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            // 🗺️ Map Section
+            // 🗺️ Map area
             Expanded(
               flex: 3,
               child: Card(
@@ -426,7 +715,6 @@ class _GeofencingPageState extends State<GeofencingPage>
                   options: MapOptions(
                     initialCenter: defaultCenter,
                     initialZoom: 15,
-                    onTap: (_, latlng) => _onTap(latlng),
                   ),
                   children: [
                     TileLayer(
@@ -434,12 +722,122 @@ class _GeofencingPageState extends State<GeofencingPage>
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.juantap.admin',
                     ),
-                    CircleLayer(circles: circles),
+
+                    // ================================
+                    // ORS Polygon Zones
+                    // ================================
+                    PolygonLayer(
+                      polygons: [
+                        // ==========================================
+                        // POLYGONS LOADED FROM FIREBASE (with severity colors)
+                        // ==========================================
+                        ..._zones.map((z) {
+                          if (z["polygon"] == null) return null;
+                          if (z["polygon"] is! List) return null;
+                          if ((z["polygon"] as List).isEmpty) return null;
+
+                          final List<dynamic> coords = z["polygon"];
+
+                          final List<LatLng> polygonPoints =
+                          coords.map((c) => LatLng(c["lat"], c["lng"])).toList();
+
+                          return Polygon(
+                            points: polygonPoints,
+                            color: getPolygonColor(z),    // ⭐ severity color applied
+                            borderColor: Colors.black54,
+                            borderStrokeWidth: 2,
+                          );
+                        }).where((p) => p != null).cast<Polygon>(),
+
+                        // ==========================================
+                        // MANUAL CIRCLE-BASED ZONES (fallback)
+                        // ==========================================
+                        ..._zones.map((z) {
+                          final center = LatLng(z['lat'], z['lng']);
+                          final radius = z['radius'].toDouble();
+
+                          final points = List.generate(12, (i) {
+                            final angle = (i * 30) * math.pi / 180;
+                            final dx = radius * 0.000005 * math.cos(angle);
+                            final dy = radius * 0.000005 * math.sin(angle);
+                            return LatLng(center.latitude + dy, center.longitude + dx);
+                          });
+
+                          return Polygon(
+                            points: points,
+                            color: getPolygonColor(z),   // ⭐ severity color applied
+                            borderColor: Colors.black54,
+                            borderStrokeWidth: 2,
+                          );
+                        }),
+
+                        // ==========================================
+                        // PULSE ANIMATION (unchanged)
+                        // ==========================================
+                        if (_focusedPosition != null && _focusedZoneId != null)
+                          Polygon(
+                            points: List.generate(12, (i) {
+                              final angle = (i * 30) * math.pi / 180;
+                              final dx = _pulseRadius * 0.000009 * math.cos(angle);
+                              final dy = _pulseRadius * 0.000009 * math.sin(angle);
+                              return LatLng(
+                                _focusedPosition!.latitude + dy,
+                                _focusedPosition!.longitude + dx,
+                              );
+                            }),
+                            color: Colors.orangeAccent.withOpacity(0.15),
+                            borderColor: Colors.orangeAccent,
+                            borderStrokeWidth: 2,
+                          ),
+                      ],
+                    ),
+
+                    // ⭐ Threat level labels (lifted higher + offset)
+                    MarkerLayer(
+                      markers: _zones.map((z) {
+                        final poly = z["polygon"];
+                        if (poly == null || poly.isEmpty) return null;
+
+                        double avgLat = 0;
+                        double avgLng = 0;
+                        for (var c in poly) {
+                          avgLat += c["lat"];
+                          avgLng += c["lng"];
+                        }
+                        avgLat /= poly.length;
+                        avgLng /= poly.length;
+
+                        final labelPos = LatLng(avgLat + 0.00055, avgLng);
+
+                        return Marker(
+                          point: labelPos,
+                          width: 160,
+                          height: 70,
+
+                          // ❗ NEW — Marker now requires a direct child widget
+                          child: Material(
+                            color: Colors.transparent,
+                            elevation: 20,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+
+                            // ⭐ This is your floating threat level label
+                            child: buildThreatLabel(z),
+                          ),
+                        );
+
+                      }).where((m) => m != null).cast<Marker>().toList(),
+                    ),
+
+
+
                     MarkerLayer(markers: markers),
                   ],
                 ),
               ),
             ),
+
             const SizedBox(width: 16),
 
             // 📋 Right Panel
@@ -449,9 +847,296 @@ class _GeofencingPageState extends State<GeofencingPage>
       ),
     );
   }
+  Map<String, List<Map<String, dynamic>>> _groupSOSByPlace() {
+    final Map<String, List<Map<String, dynamic>>> grouped = {};
 
-  // 📋 Right panel
+    const double maxDistanceMeters = 10;
+
+    for (var s in _sosZones) {
+      final place = s['placeName'] ?? 'Unknown Area';
+      final LatLng loc = LatLng(s['lat'], s['lng']);
+
+      bool inserted = false;
+
+      for (var key in grouped.keys) {
+        final first = grouped[key]!.first;
+        final LatLng firstLoc =
+        LatLng(first['lat'], first['lng']);
+
+        if (key == place) {
+          final double d =
+          _distance(loc, firstLoc);
+
+          if (d <= maxDistanceMeters) {
+            grouped[key]!.add(s);
+            inserted = true;
+            break;
+          }
+        }
+      }
+
+      if (!inserted) {
+        grouped.putIfAbsent(place, () => []);
+        grouped[place]!.add(s);
+      }
+    }
+
+    return grouped;
+  }
+
+  void _openSOSPopup(
+      String place, List<Map<String, dynamic>> alerts) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            width: 450,
+            height: MediaQuery.of(context).size.height * 0.80,
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "📍 $place",
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 15),
+
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: alerts.map((s) {
+                        return Container(
+                          margin: const EdgeInsets.only(
+                              bottom: 20),
+                          padding:
+                          const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius:
+                            BorderRadius.circular(16),
+                          ),
+                          child: Column(
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "${s['username']} - ${s['reason']}",
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight:
+                                  FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+
+                              if (s['profileImage'] != null &&
+                                  s['profileImage'] != "")
+                                Center(
+                                  child: CircleAvatar(
+                                    radius: 35,
+                                    backgroundImage:
+                                    NetworkImage(
+                                        s['profileImage']),
+                                  ),
+                                ),
+
+                              const SizedBox(height: 10),
+
+                              _infoRow(Icons.email,
+                                  "Email", s['email']),
+                              _infoRow(Icons.phone, "Phone",
+                                  s['phone']),
+                              _infoRow(
+                                  Icons.calendar_today,
+                                  "Birthdate",
+                                  s['birthdate']),
+                              _infoRow(Icons.home, "Address",
+                                  s['address']),
+                              _infoRow(
+                                  Icons.flag,
+                                  "Nationality",
+                                  s['nationality']),
+
+                              const SizedBox(height: 8),
+
+                              if (s['crimeType'] != null &&
+                                  s['crimeType'] != "")
+                                _infoRow(Icons.gavel,
+                                    "Crime Type",
+                                    s['crimeType']),
+
+                              const SizedBox(height: 10),
+
+                              if (s['proofUrl'] != null &&
+                                  s['proofUrl'] != "")
+                                Column(
+                                  crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      "SOS Proof:",
+                                      style: TextStyle(
+                                        fontWeight:
+                                        FontWeight.bold,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(
+                                        height: 8),
+
+                                    if (s['isVideo'] ==
+                                        false)
+                                      GestureDetector(
+                                        onTap: () {
+                                          showDialog(
+                                            context:
+                                            context,
+                                            builder: (_) =>
+                                                Dialog(
+                                                  child: Image
+                                                      .network(
+                                                      s['proofUrl']),
+                                                ),
+                                          );
+                                        },
+                                        child: ClipRRect(
+                                          borderRadius:
+                                          BorderRadius
+                                              .circular(
+                                              10),
+                                          child: Image.network(
+                                            s['proofUrl'],
+                                            height: 180,
+                                            width: double
+                                                .infinity,
+                                            fit:
+                                            BoxFit.cover,
+                                          ),
+                                        ),
+                                      ),
+
+                                    if (s['isVideo'] == true)
+                                      SizedBox(
+                                        height: 220,
+                                        child:
+                                        ClipRRect(
+                                          borderRadius:
+                                          BorderRadius
+                                              .circular(
+                                              12),
+                                          child:
+                                          FutureBuilder(
+                                            future:
+                                            _initializeVideoPlayer(s[
+                                            'proofUrl']),
+                                            builder: (context,
+                                                snapshot) {
+                                              if (snapshot.connectionState ==
+                                                  ConnectionState
+                                                      .waiting) {
+                                                return const Center(
+                                                    child:
+                                                    CircularProgressIndicator());
+                                              }
+                                              if (snapshot
+                                                  .hasError) {
+                                                return const Center(
+                                                    child: Text(
+                                                        "Error loading video"));
+                                              }
+                                              return Chewie(
+                                                controller:
+                                                snapshot.data
+                                                as ChewieController,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+
+                              const SizedBox(height: 6),
+
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.access_time,
+                                    size: 16,
+                                    color: Colors.black54,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    s['timestamp'],
+                                    style: const TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                Center(
+                  child: TextButton(
+                    onPressed: () =>
+                        Navigator.pop(context),
+                    child: const Text("Close"),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _infoRow(
+      IconData icon, String label, String? value) {
+    if (value == null || value.isEmpty)
+      return const SizedBox.shrink();
+
+    return Padding(
+      padding:
+      const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.black54),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "$label: $value",
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  // 📋 Right Panel
   Widget _buildRightPanel() {
+    final groupedSOS = _groupSOSByPlace();
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -476,90 +1161,143 @@ class _GeofencingPageState extends State<GeofencingPage>
               color: Color(0xFF084C41),
             ),
           ),
-          const Divider(height: 24),
+          const Divider(height: 2),
+          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+          const SizedBox(height: 20),
 
-          // 🧹 Fix Old Zones Button
-          ElevatedButton.icon(
-            onPressed: _cleanOldZones,
-            icon: const Icon(Icons.cleaning_services_rounded),
-            label: const Text("Fix Old Zones"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2E7D32),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+          const Text(
+            "SOS Alerts (Automatically Detected)",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
             ),
           ),
 
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              const Icon(Icons.location_pin, color: Colors.deepOrange),
-              const SizedBox(width: 8),
-              Text(
-                "Total Zones: ${_zones.length}",
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, color: Colors.black87),
-              ),
-            ],
+          const SizedBox(height: 10),
+
+          ElevatedButton.icon(
+            onPressed: _refreshAutoDangerZones,
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            label: const Text(
+              "Refresh Auto-Generated Zones",
+              style: TextStyle(color: Colors.white),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
-          const SizedBox(height: 12),
+
+          Text(
+            "SOS Alerts: ${_sosZones.length}",
+            style: const TextStyle(
+              color: Colors.black87,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+
           Expanded(
-            child: ListView.builder(
-              itemCount: _zones.length,
-              itemBuilder: (context, index) {
-                final zone = _zones[index];
-                final bool isFocused = _focusedZoneId == zone['id'];
-                return Container(
-                  margin:
-                  const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: isFocused
-                          ? [Color(0xFFFFE0B2), Color(0xFFFFCC80)]
-                          : [Color(0xFFFFF3E0), Color(0xFFFFEFD5)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.orange.withOpacity(0.25),
-                        blurRadius: 8,
-                        offset: const Offset(3, 3),
+            child: ListView(
+              children: groupedSOS.entries.map((entry) {
+                final place = entry.key;
+                final alerts = entry.value;
+
+                return GestureDetector(
+                  onTap: () =>
+                      _openSOSPopup(place, alerts),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(
+                        vertical: 10),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFFFFCDD2),
+                          Color(0xFFFFEBEE),
+                        ],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
                       ),
-                    ],
-                  ),
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: Colors.deepOrange,
-                      child: Icon(Icons.warning_amber_rounded,
-                          color: Colors.white),
+                      borderRadius:
+                      BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color:
+                          Colors.redAccent.withOpacity(0.25),
+                          blurRadius: 8,
+                          offset: const Offset(3, 3),
+                        ),
+                      ],
                     ),
-                    title: Text(
-                      zone['name'],
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF084C41),
-                        fontSize: 16,
-                      ),
+                    child: Column(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment:
+                          MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                "📍 $place",
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.redAccent,
+                                borderRadius:
+                                BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                "${alerts.length} alerts",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        ElevatedButton.icon(
+                          onPressed: () =>
+                              _goToSOSGroupCenter(alerts),
+                          icon: const Icon(Icons.map,
+                              color: Colors.white),
+                          label: const Text(
+                            "View on Map",
+                            style:
+                            TextStyle(color: Colors.white),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.redAccent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius:
+                              BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
+                          ),
+                        ),
+                      ],
                     ),
-                    subtitle: Text(
-                      "Lat: ${zone['lat'].toStringAsFixed(4)}, Lng: ${zone['lng'].toStringAsFixed(4)}",
-                      style:
-                      TextStyle(color: Colors.grey.shade700, fontSize: 13),
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline,
-                          color: Color(0xFF1E88E5)),
-                      onPressed: () => _confirmDelete(
-                          zone['id'].toString(), zone['name'].toString()),
-                    ),
-                    onTap: () => _focusOnZone(zone),
                   ),
                 );
-              },
+              }).toList(),
             ),
           ),
         ],

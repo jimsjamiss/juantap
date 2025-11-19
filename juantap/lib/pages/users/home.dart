@@ -300,6 +300,11 @@ class _HomePageState extends State<HomePage>
         isVideo: isVideo,
         crimeType: crimeType,
       );
+      await SOSService.saveSosToOnlyDatabase(
+        proofUrl: proofUrl,
+        isVideo: isVideo,
+        crimeType: crimeType,
+      );
 
       if (!_silentMode && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -814,9 +819,9 @@ class _HomePageState extends State<HomePage>
     for (final zoneEntry in _dangerZones.entries) {
       final zoneId = zoneEntry.key;
       final zone = Map<String, dynamic>.from(zoneEntry.value);
-      final double zLat = (zone['lat'] as num).toDouble();
-      final double zLng = (zone['lng'] as num).toDouble();
-      final double zRadius = (zone['radius'] as num).toDouble();
+      final double zLat = ((zone['lat'] ?? 0) as num).toDouble();
+      final double zLng = ((zone['lng'] ?? 0) as num).toDouble();
+      final double zRadius = ((zone['radius'] ?? 120) as num).toDouble();
       final String zoneName = zone['name'] ?? 'Danger Zone';
 
       final distance = _calculateDistance(lat, lng, zLat, zLng);
@@ -993,6 +998,7 @@ class _HomePageState extends State<HomePage>
 
   Future<void> sendSosAlert() async {
     await SOSService.sendSosAlert();
+    await SOSService.saveSosToOnlyDatabase();
     if (_isDisposed || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -1237,6 +1243,19 @@ class _HomePageState extends State<HomePage>
             const Divider(color: Colors.white54),
 
             ListTile(
+              leading: const Icon(Icons.phone_in_talk, color: Colors.white),
+              title: const Text('Emergency Hotlines', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(
+                  context,
+                  '/emergency_hotline',
+                  arguments: _userPosition, // Pass the user's GPS location
+                );
+              },
+            ),
+
+            ListTile(
               leading: const Icon(Icons.shield, color: Colors.white),
               title: const Text('Self-Defense Guides',
                   style: TextStyle(color: Colors.white)),
@@ -1340,6 +1359,11 @@ class _HomePageState extends State<HomePage>
 
                     if (result is Map) {
                       await SOSService.sendSosAlertWithProof(
+                        proofUrl: result['proofUrl'],
+                        isVideo: result['isVideo'],
+                        crimeType: result['crimeType'],
+                      );
+                      await SOSService.saveSosToOnlyDatabase(
                         proofUrl: result['proofUrl'],
                         isVideo: result['isVideo'],
                         crimeType: result['crimeType'],

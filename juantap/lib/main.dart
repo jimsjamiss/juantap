@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:juantap/pages/users/emergency_hotline_page.dart';
 import 'firebase_options.dart';
 
 // ✅ Import your pages
@@ -83,6 +84,7 @@ class JuanTap extends StatelessWidget {
         '/contact_lists_requests': (context) =>
             ContactListsRequestsPage(),
         '/responderDashboard': (context) => const ResponderDashboard(),
+        '/emergency_hotline': (context) => const EmergencyHotlinePage(),
 
         '/admin': (context) => const AdminDashboardPage(),
         '/edit_responder_profile': (context) =>

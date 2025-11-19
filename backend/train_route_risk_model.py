@@ -104,9 +104,20 @@ def ml_safe_route():
             count_nearby = 0
 
             for zone in danger_zones.values():
-                zlat, zlng, zrad = zone["lat"], zone["lng"], zone["radius"]
+
+                # Safe read with default radius
+                zlat = zone.get("lat")
+                zlng = zone.get("lng")
+                zrad = zone.get("radius", 120)  # FIXED
+
+                # Skip bad zones
+                if zlat is None or zlng is None:
+                    continue
+
+                # Compute distance
                 dist = math.sqrt((lat - zlat) ** 2 + (lng - zlng) ** 2) * 111000
                 min_dist = min(min_dist, dist)
+
                 if dist <= 500:
                     count_nearby += 1
 
