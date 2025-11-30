@@ -18,6 +18,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
   List<_ReportRow> _rows = [];
   bool _loading = true;
   DateTimeRange? _range;
+  String? _monthRangeLabel;
   String _statusFilter = 'All'; // ✅ new status filter
 
   @override
@@ -50,6 +51,9 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
           tmp.add(_ReportRow(
             responderId: responderId,
             reportId: reportId,
+            responderName: data['responderName'] ?? responderId,
+            citizenName: data['userName'] ?? 'Unknown',
+            incidentType: data['incidentType'] ?? 'Unknown',
             date: parsedTime != null
                 ? "${parsedTime.month}/${parsedTime.day}/${parsedTime.year}"
                 : 'Unknown',
@@ -96,7 +100,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
               int.parse(dateParts[0]),
               int.parse(dateParts[1]),
             );
-            return d.isAfter(_range!.start) && d.isBefore(_range!.end);
+            return !d.isBefore(_range!.start) && !d.isAfter(_range!.end);
           }
           return false;
         } catch (_) {
@@ -107,10 +111,11 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
     return filtered;
   }
 
-  // 🕓 Custom Date-Time modal picker
+  // 🕓 Custom month picker with year input
   Future<void> _pickRange() async {
-    DateTime? start;
-    DateTime? end;
+    int? selectedMonth;
+    final yearController = TextEditingController();
+    String? errorText;
 
     await showDialog(
       context: context,
@@ -120,7 +125,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
           shape:
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text(
-            'Select Date & Time Range',
+            'Select Month',
             style: TextStyle(
               color: Color(0xFF084C41),
               fontWeight: FontWeight.bold,
@@ -128,68 +133,50 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
           ),
           content: StatefulBuilder(
             builder: (context, setState) {
+              final months = List.generate(
+                12,
+                    (index) => DateFormat('MMMM').format(DateTime(0, index + 1)),
+              );
+
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _dateTimeField(
-                    label: 'Start Date & Time',
-                    selected: start,
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now(),
-                        firstDate: DateTime(2023),
-                        lastDate: DateTime(2030),
-                      );
-                      if (date != null) {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: TimeOfDay.now(),
-                        );
-                        if (time != null) {
-                          setState(() {
-                            start = DateTime(
-                              date.year,
-                              date.month,
-                              date.day,
-                              time.hour,
-                              time.minute,
-                            );
-                          });
-                        }
-                      }
-                    },
+                  DropdownButtonFormField<int>(
+                    decoration: const InputDecoration(
+                      labelText: 'Month',
+                      border: OutlineInputBorder(),
+                    ),
+                    value: selectedMonth,
+                    items: List.generate(
+                      months.length,
+                          (index) => DropdownMenuItem(
+                        value: index + 1,
+                        child: Text(months[index]),
+                      ),
+                    ),
+                    onChanged: (value) => setState(() {
+                      selectedMonth = value;
+                      errorText = null;
+                    }),
                   ),
                   const SizedBox(height: 12),
-                  _dateTimeField(
-                    label: 'End Date & Time',
-                    selected: end,
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now(),
-                        firstDate: DateTime(2023),
-                        lastDate: DateTime(2030),
-                      );
-                      if (date != null) {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: TimeOfDay.now(),
-                        );
-                        if (time != null) {
-                          setState(() {
-                            end = DateTime(
-                              date.year,
-                              date.month,
-                              date.day,
-                              time.hour,
-                              time.minute,
-                            );
-                          });
-                        }
-                      }
-                    },
+                  TextField(
+                    controller: yearController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Year',
+                      border: OutlineInputBorder(),
+                      hintText: 'e.g. 2025',
+                    ),
+                    onChanged: (_) => setState(() => errorText = null),
                   ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ],
                 ],
               );
             },
@@ -207,11 +194,30 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
                     borderRadius: BorderRadius.circular(10)),
               ),
               onPressed: () {
-                if (start != null && end != null) {
-                  setState(() {
-                    _range = DateTimeRange(start: start!, end: end!);
-                  });
+                final year = int.tryParse(yearController.text);
+                if (selectedMonth == null) {
+                  return;
                 }
+                if (year == null) {
+                  setState(() {
+                    errorText = 'Please enter a valid numeric year.';
+                  });
+                  return;
+                }
+                if (year < 2023 || year > 2035) {
+                  setState(() {
+                    errorText = 'Year must be between 2023 and 2035.';
+                  });
+                  return;
+                }
+
+                final start = DateTime(year, selectedMonth!, 1);
+                final end = DateTime(year, selectedMonth! + 1, 1)
+                    .subtract(const Duration(milliseconds: 1));
+                setState(() {
+                  _range = DateTimeRange(start: start, end: end);
+                  _monthRangeLabel = DateFormat('MMMM yyyy').format(start);
+                });
                 Navigator.pop(ctx);
               },
               child: const Text('Apply'),
@@ -220,39 +226,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
         );
       },
     );
-  }
-
-  Widget _dateTimeField({
-    required String label,
-    required DateTime? selected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.grey.shade300),
-          color: Colors.white,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              selected != null
-                  ? '${selected.month}/${selected.day}/${selected.year}  ${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}'
-                  : label,
-              style: TextStyle(
-                color: selected != null ? Colors.black : Colors.grey.shade500,
-              ),
-            ),
-            const Icon(Icons.access_time, color: Color(0xFF1E88E5)),
-          ],
-        ),
-      ),
-    );
+    yearController.dispose();
   }
 
   Color _statusColor(String status) {
@@ -381,9 +355,9 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
           ElevatedButton.icon(
             onPressed: _pickRange,
             icon: const Icon(Icons.calendar_today, color: Colors.white),
-            label: const Text(
-              'Filter by Date & Time',
-              style: TextStyle(
+            label: Text(
+              _monthRangeLabel ?? 'Filter by Month',
+              style: const TextStyle(
                 fontWeight: FontWeight.w600,
                 color: Colors.white,
               ),
@@ -416,6 +390,7 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
             onPressed: () => setState(() {
               _range = null;
               _statusFilter = 'All';
+              _monthRangeLabel = null;
             }),
             icon: const Icon(Icons.clear),
             label: const Text('Clear'),
@@ -594,8 +569,11 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
                         ],
                       ),
                       const SizedBox(height: 30),
+                      _infoRow('Citizen', r.citizenName),
+                      _infoRow('Responder', r.responderName),
                       _infoRow('Responder ID', r.responderId),
                       _infoRow('Report ID', r.reportId),
+                      _infoRow('Incident Type', r.incidentType),
                       _infoRow('Date', r.date),
                       _infoRow('Time', r.time),
                       _infoRow('Location', r.location),
@@ -723,6 +701,9 @@ class _IncidentReportsPageState extends State<IncidentReportsPage> {
 class _ReportRow {
   final String responderId;
   final String reportId;
+  final String responderName;
+  final String citizenName;
+  final String incidentType;
   final String date;
   final String time;
   final String description;
@@ -734,6 +715,9 @@ class _ReportRow {
   _ReportRow({
     required this.responderId,
     required this.reportId,
+    required this.responderName,
+    required this.citizenName,
+    required this.incidentType,
     required this.date,
     required this.time,
     required this.description,

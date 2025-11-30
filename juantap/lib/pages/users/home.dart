@@ -1026,12 +1026,12 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  void _confirmAndSendSOS() {
+  Future<void> _confirmAndSendSOS([Future<void> Function()? onConfirm]) async {
     int secondsLeft = 5;
     Timer? countdownTimer;
     bool isCancelled = false;
 
-    showDialog(
+    await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
@@ -1042,7 +1042,13 @@ class _HomePageState extends State<HomePage>
                   if (secondsLeft == 1) {
                     timer.cancel();
                     if (mounted) Navigator.pop(context);
-                    if (!isCancelled) sendSosAlert();
+                    if (!isCancelled) {
+                      if (onConfirm != null) {
+                        onConfirm();
+                      } else {
+                        sendSosAlert();
+                      }
+                    }
                   } else {
                     setState(() => secondsLeft--);
                   }
@@ -1066,6 +1072,7 @@ class _HomePageState extends State<HomePage>
         );
       },
     );
+    countdownTimer?.cancel();
   }
 
   // ===================== Utilities ==========================
@@ -1358,18 +1365,26 @@ class _HomePageState extends State<HomePage>
                     );
 
                     if (result is Map) {
-                      await SOSService.sendSosAlertWithProof(
-                        proofUrl: result['proofUrl'],
-                        isVideo: result['isVideo'],
-                        crimeType: result['crimeType'],
-                      );
-                      await SOSService.saveSosToOnlyDatabase(
-                        proofUrl: result['proofUrl'],
-                        isVideo: result['isVideo'],
-                        crimeType: result['crimeType'],
-                      );
-
-                      _confirmAndSendSOS();
+                      await _confirmAndSendSOS(() async {
+                        await SOSService.sendSosAlertWithProof(
+                          proofUrl: result['proofUrl'],
+                          isVideo: result['isVideo'],
+                          crimeType: result['crimeType'],
+                        );
+                        await SOSService.saveSosToOnlyDatabase(
+                          proofUrl: result['proofUrl'],
+                          isVideo: result['isVideo'],
+                          crimeType: result['crimeType'],
+                        );
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('🚨 SOS sent with proof'),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                        }
+                      });
                     }
                   },
 

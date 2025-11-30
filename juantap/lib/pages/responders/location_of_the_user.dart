@@ -429,7 +429,7 @@ class _LocationOfUserPageState extends State<LocationOfUserPage> {
                             MaterialPageRoute(
                               builder: (_) => IncidentReportPage(
                                 userId: widget.userId,
-                                userName: widget.userName,
+                                userName: _fetchedUserName ?? widget.userName,
                                 responderLocation: _responderLocation,
                               ),
                             ),

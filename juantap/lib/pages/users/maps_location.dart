@@ -9,7 +9,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-
+import 'package:intl/intl.dart';
 import 'package:location/location.dart' as loc;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -83,6 +83,21 @@ class _MapsLocationState extends State<MapsLocation> {
     _dangerPlayer.dispose();
     _vibrationTimer?.cancel();
     super.dispose();
+  }
+
+  // ======================================================
+  // 🕒 Timestamp Formatter (NEW)
+  // ======================================================
+  String _formatTimestamp(String? isoString) {
+    if (isoString == null || isoString.isEmpty) return 'N/A';
+    try {
+      final dateTime = DateTime.parse(isoString);
+      // Example format: "Nov 17, 2025 at 8:12 PM"
+      return DateFormat('MMM d, yyyy h:mm a').format(dateTime.toLocal());
+    } catch (e) {
+      debugPrint("Failed to parse timestamp: $e");
+      return isoString; // Fallback to raw string
+    }
   }
 
   // ======================================================
@@ -332,16 +347,17 @@ class _MapsLocationState extends State<MapsLocation> {
             ),
 
           const SizedBox(height: 10),
-          Row(
-            children: [
-              const Icon(Icons.access_time, size: 16, color: Colors.black54),
-              const SizedBox(width: 4),
-              Text(
-                s["timestamp"] ?? "",
-                style: const TextStyle(fontSize: 13),
-              ),
-            ],
-          ),
+          // Row(
+          //   children: [
+          //     const Icon(Icons.access_time, size: 16, color: Colors.black54),
+          //     const SizedBox(width: 4),
+          //     Text(
+          //       s["timestamp"] ?? "",
+          //       style: const TextStyle(fontSize: 13),
+          //     ),
+          //   ],
+          // ),
+          _infoRow(Icons.access_time, "Timestamp", _formatTimestamp(s["timestamp"])),
         ],
       ),
     );
@@ -893,11 +909,42 @@ class _MapsLocationState extends State<MapsLocation> {
     }
   }
 
+  // [maps_location.dart] - Replace the entire _showZoneInfo function with this updated version
+
   // ======================================================
-  // 🧊 Zone info popup (from danger_zones)
+  // 🧊 Zone info popup (from danger_zones) - UPDATED
   // ======================================================
   void _showZoneInfo(Map<String, dynamic> zone) {
-    final sosList = (zone["sos_details"] ?? []) as List;
+    // 1. Get Zone boundaries for filtering
+    final double zoneLat = (zone["lat"] as num?)?.toDouble() ?? 0.0;
+    final double zoneLng = (zone["lng"] as num?)?.toDouble() ?? 0.0;
+    final LatLng zoneCenter = LatLng(zoneLat, zoneLng);
+    final double zoneRadius = ((zone["radius"] ?? 120) as num).toDouble();
+    final List poly = (zone["polygon"] ?? []) as List;
+    final String zoneName = zone["name"] ?? "Danger Zone";
+
+    // 2. Filter the global _sosAlerts list to find alerts within this zone.
+    final List<Map<String, dynamic>> filteredSosAlerts = _sosAlerts.where((alert) {
+      final double alertLat = alert['lat'] as double;
+      final double alertLng = alert['lng'] as double;
+      final LatLng alertLoc = LatLng(alertLat, alertLng);
+
+      // Check if the alert location is inside the polygon (if one exists)
+      if (poly.isNotEmpty && _isInsidePolygon(alertLoc, poly)) {
+        return true;
+      }
+
+      // Check if the alert location is within the circular radius
+      final double distance = _calculateDistance(alertLoc, zoneCenter);
+      if (distance <= zoneRadius) {
+        return true;
+      }
+
+      return false;
+    }).toList();
+
+    // The list to be displayed is now the filtered list.
+    final sosList = filteredSosAlerts;
 
     showModalBottomSheet(
       context: context,
@@ -908,55 +955,59 @@ class _MapsLocationState extends State<MapsLocation> {
       ),
       builder: (context) {
         return FractionallySizedBox(
-          heightFactor: 0.95,
+          heightFactor: 0.85,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 60,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(10),
+                Center(
+                  child: Container(
+                    width: 60,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  zone["name"] ?? "Danger Zone",
+                  zoneName,
                   style: const TextStyle(
-                    fontSize: 28,
+                    fontSize: 26,
                     fontWeight: FontWeight.bold,
                     color: Colors.redAccent,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   "Severity: ${zone["severity"]?.toString().toUpperCase() ?? "UNKNOWN"}",
-                  style: const TextStyle(fontSize: 18),
+                  style: const TextStyle(fontSize: 16),
                 ),
+                // 💥 This count now reflects the filtered list, matching the other views' data source
                 Text(
                   "Total SOS Reports: ${sosList.length}",
-                  style: const TextStyle(fontSize: 18),
+                  style: const TextStyle(fontSize: 16),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 const Divider(),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    "SOS Alerts in this Area",
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 Expanded(
-                  child: ListView(
-                    children: sosList
-                        .map((s) => _buildSOSCard(Map<String, dynamic>.from(s as Map)))
-                        .toList(),
+                  child: sosList.isEmpty
+                      ? const Center(
+                    child: Text(
+                      "No recent SOS alerts recorded in this area.",
+                      style: TextStyle(fontSize: 15, color: Colors.black54),
+                    ),
+                  )
+                      : ListView.builder(
+                    itemCount: sosList.length,
+                    itemBuilder: (context, index) {
+                      // 💥 We use the complete, rich alert data directly from the filtered list.
+                      final alert = sosList[index];
+                      return _buildSOSCard(alert);
+                    },
                   ),
                 ),
               ],
