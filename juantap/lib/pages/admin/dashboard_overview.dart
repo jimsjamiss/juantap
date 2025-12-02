@@ -32,7 +32,7 @@ class _DashboardOverviewState extends State<DashboardOverview> {
   void initState() {
     super.initState();
     _usersRef = FirebaseDatabase.instance.ref('users');
-    _sosRef = FirebaseDatabase.instance.ref('sos_alerts');
+    _sosRef = FirebaseDatabase.instance.ref('only_sos_alerts');
     _zonesRef = FirebaseDatabase.instance.ref('danger_zones');
     _reportsRef = FirebaseDatabase.instance.ref('responder_reports');
     _guidesRef = FirebaseDatabase.instance.ref('self_defense_guides');
